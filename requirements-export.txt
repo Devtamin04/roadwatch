@@ -1,0 +1,5 @@
+# Export-only dependencies. Needed only to run scripts/export_*.py, never at runtime.
+# Pulls in torch (CPU build is fine for exporting).
+ultralytics>=8.3
+onnx>=1.15
+onnxsim>=0.4
