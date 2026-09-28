@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,22 +46,30 @@ def main() -> int:
         # Let Ultralytics download official weights into models/.
         weights = MODELS_DIR / weights.name
 
-    model = YOLO(str(weights))
-    exported = Path(
-        model.export(
-            format="onnx",
-            imgsz=args.imgsz,
-            simplify=True,
-            dynamic=False,
-            opset=args.opset,
-            half=False,
-            nms=False,
-        )
-    )
+    if not weights.exists():
+        # Official name (e.g. yolo11n.pt): Ultralytics downloads it on first use.
+        YOLO(str(weights))
 
     name = args.name or f"{Path(args.weights).stem}_{args.imgsz}"
     dest = MODELS_DIR / f"{name}.onnx"
-    if exported.resolve() != dest.resolve():
+    # Ultralytics writes <stem>.onnx next to the weights, which could overwrite an
+    # unrelated model in models/ (e.g. vn_signs_best.pt -> vn_signs_best.onnx).
+    # Export from a private copy in a temp dir instead.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_weights = Path(tmp) / weights.name
+        shutil.copy2(weights, tmp_weights)
+        model = YOLO(str(tmp_weights))
+        exported = Path(
+            model.export(
+                format="onnx",
+                imgsz=args.imgsz,
+                simplify=True,
+                dynamic=False,
+                opset=args.opset,
+                half=False,
+                nms=False,
+            )
+        )
         shutil.move(str(exported), dest)
 
     classes = [model.names[i] for i in sorted(model.names)]
