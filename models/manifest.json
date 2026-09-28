@@ -1,6 +1,20 @@
 {
   "models": [
     {
+      "name": "vn-signs-768",
+      "file": "vn_signs_best.onnx",
+      "sha256": "68bcc1753f20e2c7a10cafd72d1dfbe2157acd2fb3ea477af856c66b3f3436fc",
+      "input_shape": [
+        1,
+        3,
+        768,
+        768
+      ],
+      "source": "github.com/HoangGiaBao107/Vietnamese-Traffic-Sign-Detection-and-Warning-System",
+      "classes": "see models/sign_classes.json (58 VR-TSD classes)",
+      "notes": "Repo MIT; ONNX metadata says Ultralytics AGPL-3.0. Fixed 768x768 input, no .pt published. Replace with a retrained vn_signs_416.onnx when available."
+    },
+    {
       "name": "yolo11n_320",
       "file": "yolo11n_320.onnx",
       "sha256": "66fe031adcb139d0c87aaa7fcd4da227c5819f4a2936199a2c9dce9f89178e65",

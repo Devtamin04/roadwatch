@@ -35,10 +35,11 @@ from PySide6.QtWidgets import (
 )
 
 from roadwatch.config import LaneConfig, WorkerConfig
-from roadwatch.hud import draw_detections, draw_lanes, draw_status
+from roadwatch.hud import draw_detections, draw_lanes, draw_signs, draw_status
 from roadwatch.perception.lanes import LaneModel, LanePipeline
 from roadwatch.perception.objects import ObjectDetector
 from roadwatch.perception.onnx_base import ModelNotAvailable
+from roadwatch.perception.signs import SignDetector
 from roadwatch.perception.workers import LatestFrameWorker
 from roadwatch.video_io import open_video
 
@@ -61,10 +62,11 @@ class DetectWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, detector: ObjectDetector, path: str, realtime: bool, save_path: str | None,
-                 lane_model: LaneModel | None = None):
+                 lane_model: LaneModel | None = None, sign_model: SignDetector | None = None):
         super().__init__()
         self.detector = detector
         self.lane_model = lane_model
+        self.sign_model = sign_model
         self.path = path
         self.realtime = realtime
         self.save_path = save_path
@@ -101,6 +103,12 @@ class DetectWorker(QThread):
                 LanePipeline(self.lane_model), every_n=wcfg.lane_every_n,
                 max_staleness_frames=wcfg.max_staleness_frames, name="lane",
             )
+        sign_worker = None
+        if self.sign_model is not None:
+            sign_worker = LatestFrameWorker(
+                self.sign_model.detect, every_n=wcfg.sign_every_n,
+                max_staleness_frames=wcfg.max_staleness_frames, name="signs",
+            )
         good_q = LaneConfig().good_quality
         writer = None
         if self.save_path:
@@ -127,6 +135,8 @@ class DetectWorker(QThread):
                 if lane_worker is not None:
                     # Worker keeps a reference; hand it a copy since we draw on `frame`.
                     lane_worker.submit(frame.copy(), session_id, n)
+                if sign_worker is not None:
+                    sign_worker.submit(frame.copy(), session_id, n)
                 t0 = time.perf_counter()
                 dets = self.detector.detect(frame)
                 dt = (time.perf_counter() - t0) * 1000
@@ -137,6 +147,9 @@ class DetectWorker(QThread):
                 lane_res = lane_worker.get_latest_result(session_id, n) if lane_worker else None
                 if lane_res is not None:
                     draw_lanes(frame, lane_res.value, good_q)
+                sign_res = sign_worker.get_latest_result(session_id, n) if sign_worker else None
+                if sign_res is not None:
+                    draw_signs(frame, sign_res.value)
                 draw_detections(frame, dets)
                 draw_status(frame, f"FPS {fps:.1f}  detect {dt:.1f} ms")
                 if writer is not None:
@@ -168,6 +181,12 @@ class DetectWorker(QThread):
                         "locked": lane_res.value.state.quality < good_q,
                     },
                     "lane_on": lane_worker is not None,
+                    "signs_on": sign_worker is not None,
+                    "signs": None if sign_res is None else {
+                        "items": [(d.name_vi, d.conf, d.group) for d in sign_res.value],
+                        "ms": sign_res.latency_ms,
+                        "age": n - sign_res.seq,
+                    },
                     "lane_dropped": lane_worker.stats.overwritten if lane_worker else 0,
                 })
 
@@ -179,8 +198,9 @@ class DetectWorker(QThread):
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"Lỗi khi xử lý video:\n{e}")
         finally:
-            if lane_worker is not None:
-                lane_worker.stop()
+            for wk in (lane_worker, sign_worker):
+                if wk is not None:
+                    wk.stop()
             reader.close()
             if writer is not None:
                 writer.release()
@@ -224,10 +244,12 @@ class VideoView(QLabel):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, detector: ObjectDetector, lane_model: LaneModel | None = None):
+    def __init__(self, detector: ObjectDetector, lane_model: LaneModel | None = None,
+                 sign_model: SignDetector | None = None):
         super().__init__()
         self.detector = detector
         self.lane_model = lane_model
+        self.sign_model = sign_model
         self.worker: DetectWorker | None = None
         self.setWindowTitle("RoadWatch — Nhận diện người/xe")
         self.resize(1400, 820)
@@ -258,9 +280,15 @@ class MainWindow(QMainWindow):
         self.chk_lanes.setEnabled(lane_model is not None)
         if lane_model is None:
             self.chk_lanes.setToolTip("Chưa có model YOLOP: chạy scripts/download_models.py")
+        self.chk_signs = QCheckBox("Biển báo")
+        self.chk_signs.setChecked(sign_model is not None)
+        self.chk_signs.setEnabled(sign_model is not None)
+        if sign_model is None:
+            self.chk_signs.setToolTip("Chưa có model biển báo: chạy scripts/download_models.py vn-signs-768")
         tb.addWidget(self.chk_realtime)
         tb.addWidget(self.chk_save)
         tb.addWidget(self.chk_lanes)
+        tb.addWidget(self.chk_signs)
 
         self.view = VideoView()
         self.info = QLabel()
@@ -292,6 +320,20 @@ class MainWindow(QMainWindow):
         return (f"<b>Model</b><br>{d.path.name}<br>input {d.input_hw[1]}×{d.input_hw[0]}, "
                 f"{threads} thread CPU<br>")
 
+    @staticmethod
+    def _signs_html(s: dict) -> str:
+        if not s["signs_on"]:
+            return "&nbsp;&nbsp;(tắt)<br>"
+        if s["signs"] is None:
+            return "&nbsp;&nbsp;(đang chờ kết quả)<br>"
+        sg = s["signs"]
+        colors = {"speed_limit": "#d22", "prohibition": "#c40", "warning": "#b80", "mandatory": "#15c"}
+        items = "".join(
+            f"&nbsp;&nbsp;<span style='color:{colors.get(g, '#555')}'>● {name}</span> ({conf:.2f})<br>"
+            for name, conf, g in sg["items"]
+        ) or "&nbsp;&nbsp;(không thấy biển)<br>"
+        return items + f"&nbsp;&nbsp;<small>model {sg['ms']:.0f} ms, trễ {sg['age']} frame</small><br>"
+
     # -- actions ---------------------------------------------------------
     def choose_file(self) -> None:
         start_dir = str(Path.cwd() / "video") if (Path.cwd() / "video").is_dir() else str(Path.cwd())
@@ -306,7 +348,9 @@ class MainWindow(QMainWindow):
             p = Path(path)
             save_path = str(p.with_name(f"{p.stem}_roadwatch.mp4"))
         lane = self.lane_model if self.chk_lanes.isChecked() else None
-        self.worker = DetectWorker(self.detector, path, self.chk_realtime.isChecked(), save_path, lane)
+        signs = self.sign_model if self.chk_signs.isChecked() else None
+        self.worker = DetectWorker(self.detector, path, self.chk_realtime.isChecked(), save_path,
+                                   lane, signs)
         self.worker.frame_ready.connect(self.on_frame)
         self.worker.done.connect(self.on_done)
         self.worker.failed.connect(self.on_failed)
@@ -366,6 +410,7 @@ class MainWindow(QMainWindow):
             f"p50 / p95: {s['p50']:.1f} / <span style='color:{ok}'>{s['p95']:.1f}</span> ms<br>"
             f"<small>(mục tiêu ≤ 40 ms)</small><br><br>"
             f"<b>Làn đường</b><br>{lane}<br>"
+            f"<b>Biển báo</b><br>{self._signs_html(s)}<br>"
             f"<b>Trong frame này</b><br>{counts}"
         )
         self.statusBar().showMessage(f"Đang chạy {self.current}")
@@ -416,7 +461,12 @@ def main(argv: list[str] | None = None) -> int:
     except ModelNotAvailable as e:
         print(f"Lane module disabled: {e}", file=sys.stderr)
         lane_model = None
-    win = MainWindow(detector, lane_model)
+    try:
+        sign_model = SignDetector()
+    except ModelNotAvailable as e:
+        print(f"Sign module disabled: {e}", file=sys.stderr)
+        sign_model = None
+    win = MainWindow(detector, lane_model, sign_model)
     win.show()
     if len(argv) > 1:
         win.start(argv[1])

@@ -35,6 +35,16 @@ SOURCES = {
     }
     for s in (320, 640)
 }
+SOURCES["vn-signs-768"] = {
+    "file": "vn_signs_best.onnx",
+    "url": "https://github.com/HoangGiaBao107/Vietnamese-Traffic-Sign-Detection-and-Warning-System"
+           "/raw/main/web_deployment/best.onnx",
+    "input_shape": [1, 3, 768, 768],
+    "source": "github.com/HoangGiaBao107/Vietnamese-Traffic-Sign-Detection-and-Warning-System",
+    "classes": "see models/sign_classes.json (58 VR-TSD classes)",
+    "notes": ("Repo MIT; ONNX metadata says Ultralytics AGPL-3.0. Fixed 768x768 input, "
+              "no .pt published. Replace with a retrained vn_signs_416.onnx when available."),
+}
 
 
 def fetch(name: str, spec: dict) -> None:

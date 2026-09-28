@@ -87,3 +87,19 @@ class LaneConfig:
     # Lane-line pixels in the bottom half giving full pixel score (fraction of that area).
     pixel_norm_frac: float = 0.004
     good_quality: float = 0.6
+
+
+def default_sign_model() -> Path:
+    """Prefer a locally retrained 416 model; fall back to the upstream 768 one."""
+    retrained = MODELS_DIR / "vn_signs_416.onnx"
+    return retrained if retrained.exists() else MODELS_DIR / "vn_signs_best.onnx"
+
+
+@dataclass
+class SignConfig:
+    model_path: Path = field(default_factory=default_sign_model)
+    classes_path: Path = MODELS_DIR / "sign_classes.json"
+    imgsz: int = 416  # only used if the model input is dynamic
+    conf_thr: float = 0.5
+    iou_thr: float = 0.5
+    num_threads: int = 2

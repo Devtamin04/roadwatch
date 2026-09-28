@@ -1,0 +1,480 @@
+{
+  "_note": "Draft generated from the model's class names. Review 'group' and 'speed_value' by hand, then set reviewed=true.",
+  "reviewed": false,
+  "groups": [
+    "speed_limit",
+    "speed_limit_end",
+    "min_speed",
+    "end_prohibition",
+    "prohibition",
+    "warning",
+    "mandatory",
+    "information"
+  ],
+  "classes": [
+    {
+      "id": 0,
+      "name": "102-cam-di-nguoc-chieu",
+      "code": "102",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm đi ngược chiều"
+    },
+    {
+      "id": 1,
+      "name": "103a-cam-oto",
+      "code": "103a",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm ô tô"
+    },
+    {
+      "id": 2,
+      "name": "103b-cam-oto-re-phai",
+      "code": "103b",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm ô tô rẽ phải"
+    },
+    {
+      "id": 3,
+      "name": "103c-cam-oto-re-trai",
+      "code": "103c",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm ô tô rẽ trái"
+    },
+    {
+      "id": 4,
+      "name": "106-cam-oto-tai",
+      "code": "106",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm ô tô tải"
+    },
+    {
+      "id": 5,
+      "name": "107-cam-oto-khach-va-oto-tai",
+      "code": "107",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm ô tô khách và ô tô tải"
+    },
+    {
+      "id": 6,
+      "name": "123a-cam-re-trai",
+      "code": "123a",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm rẽ trái"
+    },
+    {
+      "id": 7,
+      "name": "123b-cam-re-phai",
+      "code": "123b",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm rẽ phải"
+    },
+    {
+      "id": 8,
+      "name": "124a-cam-quay-dau-xe",
+      "code": "124a",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm quay đầu xe"
+    },
+    {
+      "id": 9,
+      "name": "124b-cam-oto-quay-dau-xe",
+      "code": "124b",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm ô tô quay đầu xe"
+    },
+    {
+      "id": 10,
+      "name": "124c-cam-re-trai-va-cam-quay-dau-xe",
+      "code": "124c",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm rẽ trái và quay đầu xe"
+    },
+    {
+      "id": 11,
+      "name": "125-cam-vuot",
+      "code": "125",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm vượt"
+    },
+    {
+      "id": 12,
+      "name": "127-toc-do-toi-da-100",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 100,
+      "name_vi": "Tốc độ tối đa 100 km/h"
+    },
+    {
+      "id": 13,
+      "name": "127-toc-do-toi-da-20",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 20,
+      "name_vi": "Tốc độ tối đa 20 km/h"
+    },
+    {
+      "id": 14,
+      "name": "127-toc-do-toi-da-30",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 30,
+      "name_vi": "Tốc độ tối đa 30 km/h"
+    },
+    {
+      "id": 15,
+      "name": "127-toc-do-toi-da-40",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 40,
+      "name_vi": "Tốc độ tối đa 40 km/h"
+    },
+    {
+      "id": 16,
+      "name": "127-toc-do-toi-da-50",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 50,
+      "name_vi": "Tốc độ tối đa 50 km/h"
+    },
+    {
+      "id": 17,
+      "name": "127-toc-do-toi-da-60",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 60,
+      "name_vi": "Tốc độ tối đa 60 km/h"
+    },
+    {
+      "id": 18,
+      "name": "127-toc-do-toi-da-70",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 70,
+      "name_vi": "Tốc độ tối đa 70 km/h"
+    },
+    {
+      "id": 19,
+      "name": "127-toc-do-toi-da-80",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 80,
+      "name_vi": "Tốc độ tối đa 80 km/h"
+    },
+    {
+      "id": 20,
+      "name": "127-toc-do-toi-da-90",
+      "code": "127",
+      "group": "speed_limit",
+      "speed_value": 90,
+      "name_vi": "Tốc độ tối đa 90 km/h"
+    },
+    {
+      "id": 21,
+      "name": "128-cam-su-dung-coi",
+      "code": "128",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm sử dụng còi"
+    },
+    {
+      "id": 22,
+      "name": "130-cam-dung-va-do-xe",
+      "code": "130",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm dừng và đỗ xe"
+    },
+    {
+      "id": 23,
+      "name": "131a-cam-do-xe",
+      "code": "131a",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm đỗ xe"
+    },
+    {
+      "id": 24,
+      "name": "131b-cam-do-xe-ngay-le",
+      "code": "131b",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm đỗ xe ngày lẻ"
+    },
+    {
+      "id": 25,
+      "name": "131c-cam-do-xe-ngay-chan",
+      "code": "131c",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm đỗ xe ngày chẵn"
+    },
+    {
+      "id": 26,
+      "name": "133-het-cam-vuot",
+      "code": "133",
+      "group": "end_prohibition",
+      "speed_value": null,
+      "name_vi": "Hết cấm vượt"
+    },
+    {
+      "id": 27,
+      "name": "134-het-han-che-toc-do-toi-da",
+      "code": "134",
+      "group": "speed_limit_end",
+      "speed_value": null,
+      "name_vi": "Hết hạn chế tốc độ tối đa"
+    },
+    {
+      "id": 28,
+      "name": "135-het-tat-ca-cac-lenh-cam",
+      "code": "135",
+      "group": "end_prohibition",
+      "speed_value": null,
+      "name_vi": "Hết tất cả các lệnh cấm"
+    },
+    {
+      "id": 29,
+      "name": "136-cam-di-thang",
+      "code": "136",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm đi thẳng"
+    },
+    {
+      "id": 30,
+      "name": "137-cam-re-trai-va-re-phai",
+      "code": "137",
+      "group": "prohibition",
+      "speed_value": null,
+      "name_vi": "Cấm rẽ trái và rẽ phải"
+    },
+    {
+      "id": 31,
+      "name": "201-cho-ngoat-nguy-hiem",
+      "code": "201",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Chỗ ngoặt nguy hiểm"
+    },
+    {
+      "id": 32,
+      "name": "203-duong-bi-hep",
+      "code": "203",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Đường bị hẹp"
+    },
+    {
+      "id": 33,
+      "name": "205-duong-giao-nhau",
+      "code": "205",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Đường giao nhau"
+    },
+    {
+      "id": 34,
+      "name": "207-giao-nhau-voi-duong-khong-uu-tien",
+      "code": "207",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Giao nhau với đường không ưu tiên"
+    },
+    {
+      "id": 35,
+      "name": "208-giao-nhau-voi-duong-uu-tien",
+      "code": "208",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Giao nhau với đường ưu tiên"
+    },
+    {
+      "id": 36,
+      "name": "209-giao-nhau-co-tin-hieu-den",
+      "code": "209",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Giao nhau có tín hiệu đèn"
+    },
+    {
+      "id": 37,
+      "name": "221-duong-go-ghe",
+      "code": "221",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Đường gồ ghề"
+    },
+    {
+      "id": 38,
+      "name": "224-duong-nguoi-di-bo-cat-ngang",
+      "code": "224",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Đường người đi bộ cắt ngang"
+    },
+    {
+      "id": 39,
+      "name": "225-chu-y-tre-em",
+      "code": "225",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Chú ý trẻ em"
+    },
+    {
+      "id": 40,
+      "name": "227-cong-truong",
+      "code": "227",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Công trường"
+    },
+    {
+      "id": 41,
+      "name": "245-di-cham",
+      "code": "245",
+      "group": "warning",
+      "speed_value": null,
+      "name_vi": "Đi chậm"
+    },
+    {
+      "id": 42,
+      "name": "301a-cac-xe-chi-duoc-di-thang",
+      "code": "301a",
+      "group": "mandatory",
+      "speed_value": null,
+      "name_vi": "Chỉ được đi thẳng"
+    },
+    {
+      "id": 43,
+      "name": "301b-cac-xe-chi-duoc-re-phai",
+      "code": "301b",
+      "group": "mandatory",
+      "speed_value": null,
+      "name_vi": "Chỉ được rẽ phải"
+    },
+    {
+      "id": 44,
+      "name": "301c-cac-xe-chi-duoc-re-trai",
+      "code": "301c",
+      "group": "mandatory",
+      "speed_value": null,
+      "name_vi": "Chỉ được rẽ trái"
+    },
+    {
+      "id": 45,
+      "name": "301d-cac-xe-chi-duoc-re-phai-2",
+      "code": "301d",
+      "group": "mandatory",
+      "speed_value": null,
+      "name_vi": "Chỉ được rẽ phải (kiểu 2)"
+    },
+    {
+      "id": 46,
+      "name": "301e-cac-xe-chi-duoc-re-trai-2",
+      "code": "301e",
+      "group": "mandatory",
+      "speed_value": null,
+      "name_vi": "Chỉ được rẽ trái (kiểu 2)"
+    },
+    {
+      "id": 47,
+      "name": "301h-cac-xe-chi-duoc-di-thang-va-re-trai",
+      "code": "301h",
+      "group": "mandatory",
+      "speed_value": null,
+      "name_vi": "Chỉ được đi thẳng và rẽ trái"
+    },
+    {
+      "id": 48,
+      "name": "302a-huong-phai-di-vong-chuong-ngai-vat-1",
+      "code": "302a",
+      "group": "mandatory",
+      "speed_value": null,
+      "name_vi": "Hướng phải đi vòng chướng ngại vật"
+    },
+    {
+      "id": 49,
+      "name": "303-noi-giao-nhau-chay-theo-vong-xuyen",
+      "code": "303",
+      "group": "mandatory",
+      "speed_value": null,
+      "name_vi": "Nơi giao nhau chạy theo vòng xuyến"
+    },
+    {
+      "id": 50,
+      "name": "306-toc-do-toi-thieu-60",
+      "code": "306",
+      "group": "min_speed",
+      "speed_value": 60,
+      "name_vi": "Tốc độ tối thiểu 60 km/h"
+    },
+    {
+      "id": 51,
+      "name": "407a-duong-mot-chieu",
+      "code": "407a",
+      "group": "information",
+      "speed_value": null,
+      "name_vi": "Đường một chiều"
+    },
+    {
+      "id": 52,
+      "name": "420-bat-dau-khu-dong-dan-cu",
+      "code": "420",
+      "group": "information",
+      "speed_value": null,
+      "name_vi": "Bắt đầu khu đông dân cư"
+    },
+    {
+      "id": 53,
+      "name": "421-ket-thuc-khu-dong-dan-cu",
+      "code": "421",
+      "group": "information",
+      "speed_value": null,
+      "name_vi": "Kết thúc khu đông dân cư"
+    },
+    {
+      "id": 54,
+      "name": "423a-duong-nguoi-di-bo-sang-ngang-1",
+      "code": "423a",
+      "group": "information",
+      "speed_value": null,
+      "name_vi": "Đường người đi bộ sang ngang"
+    },
+    {
+      "id": 55,
+      "name": "437-bat-dau-duong-cao-toc",
+      "code": "437",
+      "group": "information",
+      "speed_value": null,
+      "name_vi": "Bắt đầu đường cao tốc"
+    },
+    {
+      "id": 56,
+      "name": "438-ket-thuc-duong-cao-toc",
+      "code": "438",
+      "group": "information",
+      "speed_value": null,
+      "name_vi": "Kết thúc đường cao tốc"
+    },
+    {
+      "id": 57,
+      "name": "442-cho",
+      "code": "442",
+      "group": "information",
+      "speed_value": null,
+      "name_vi": "Chợ"
+    }
+  ]
+}
