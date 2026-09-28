@@ -1,7 +1,7 @@
 """Run the person/vehicle detector on a video, draw boxes, report FPS and latency.
 
-    python scripts/demo_objects.py --source video/segment_000.mp4 --show
-    python scripts/demo_objects.py --source video/segment_000.mp4 --max-frames 300
+    python scripts/demo_objects.py --source video/segment_000_720p.mp4 --show
+    python scripts/demo_objects.py --source video/segment_000.mp4 --max-frames 300  # AV1 ok
 """
 
 from __future__ import annotations
@@ -18,22 +18,15 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from roadwatch.config import ObjectDetectorConfig  # noqa: E402
+from roadwatch.hud import draw_detections, draw_status  # noqa: E402
 from roadwatch.perception.objects import ObjectDetector  # noqa: E402
-
-COLORS = {
-    "person": (0, 0, 255),
-    "bicycle": (0, 165, 255),
-    "motorcycle": (0, 255, 255),
-    "car": (0, 255, 0),
-    "bus": (255, 128, 0),
-    "truck": (255, 0, 128),
-}
+from roadwatch.video_io import open_video  # noqa: E402
 WARMUP_FRAMES = 20
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--source", required=True, help="video path or webcam index")
+    p.add_argument("--source", required=True, help="video path (AV1 etc. decoded via ffmpeg)")
     p.add_argument("--model", type=Path, help="override ONNX model path")
     p.add_argument("--threads", type=int)
     p.add_argument("--show", action="store_true")
@@ -52,11 +45,9 @@ def main() -> int:
     det = ObjectDetector(cfg, num_threads=args.threads)
     print(f"Model {det.path.name}: input HxW={det.input_hw}, threads={det.session.get_session_options().intra_op_num_threads}")
 
-    source = int(args.source) if args.source.isdigit() else args.source
-    cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        print(f"Cannot open source {args.source}")
-        return 1
+    reader = open_video(args.source, max_width=args.resize_width)
+    print(f"Video {reader.info.width}x{reader.info.height} @ {reader.info.fps:.1f} fps "
+          f"via {reader.info.backend}")
 
     writer = None
     det_ms: list[float] = []
@@ -66,31 +57,22 @@ def main() -> int:
     t_start = time.perf_counter()
     while True:
         t0 = time.perf_counter()
-        ok, frame = cap.read()
-        if not ok:
+        frame = reader.read()
+        if frame is None:
             break
-        if args.resize_width and frame.shape[1] > args.resize_width:
-            scale = args.resize_width / frame.shape[1]
-            frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         frame_wh = (frame.shape[1], frame.shape[0])
 
         t1 = time.perf_counter()
         dets = det.detect(frame)
         t2 = time.perf_counter()
 
-        for d in dets:
-            x1, y1, x2, y2 = map(int, d.xyxy)
-            color = COLORS.get(d.cls, (255, 255, 255))
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, f"{d.cls} {d.conf:.2f}", (x1, max(12, y1 - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        draw_detections(frame, dets)
         fps_now = 1000.0 / np.mean(loop_ms[-30:]) if loop_ms else 0.0
-        cv2.putText(frame, f"FPS {fps_now:.1f}  det {(t2 - t1) * 1000:.1f} ms", (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        draw_status(frame, f"FPS {fps_now:.1f}  det {(t2 - t1) * 1000:.1f} ms")
 
         if args.save:
             if writer is None:
-                fps_src = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                fps_src = reader.info.fps
                 writer = cv2.VideoWriter(str(args.save), cv2.VideoWriter_fourcc(*"mp4v"),
                                          fps_src, (frame.shape[1], frame.shape[0]))
             writer.write(frame)
@@ -107,14 +89,13 @@ def main() -> int:
             break
 
     elapsed = time.perf_counter() - t_start
-    cap.release()
+    reader.close()
     if writer:
         writer.release()
     cv2.destroyAllWindows()
 
     if not n:
-        print("No frames read. If the video is AV1, transcode it to H.264, e.g.:\n"
-              "  ffmpeg -c:v libdav1d -i in.mp4 -vf scale=1280:720 -c:v libx264 -crf 20 -an out.mp4")
+        print("No frames read")
         return 1
     print(f"Frames: {n}, frame size: {frame_wh[0]}x{frame_wh[1]}")
     if det_ms:
