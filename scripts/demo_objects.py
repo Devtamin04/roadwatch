@@ -62,6 +62,7 @@ def main() -> int:
     det_ms: list[float] = []
     loop_ms: list[float] = []
     n = 0
+    frame_wh = (0, 0)
     t_start = time.perf_counter()
     while True:
         t0 = time.perf_counter()
@@ -71,6 +72,7 @@ def main() -> int:
         if args.resize_width and frame.shape[1] > args.resize_width:
             scale = args.resize_width / frame.shape[1]
             frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        frame_wh = (frame.shape[1], frame.shape[0])
 
         t1 = time.perf_counter()
         dets = det.detect(frame)
@@ -114,7 +116,7 @@ def main() -> int:
         print("No frames read. If the video is AV1, transcode it to H.264, e.g.:\n"
               "  ffmpeg -c:v libdav1d -i in.mp4 -vf scale=1280:720 -c:v libx264 -crf 20 -an out.mp4")
         return 1
-    print(f"Frames: {n}, frame size: {frame.shape[1]}x{frame.shape[0]}")
+    print(f"Frames: {n}, frame size: {frame_wh[0]}x{frame_wh[1]}")
     if det_ms:
         a = np.array(det_ms)
         print(f"Detect latency (after {WARMUP_FRAMES} warm-up frames): "
