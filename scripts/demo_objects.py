@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 from roadwatch.config import ObjectDetectorConfig  # noqa: E402
 from roadwatch.hud import draw_detections, draw_status  # noqa: E402
 from roadwatch.perception.objects import ObjectDetector  # noqa: E402
-from roadwatch.video_io import open_video  # noqa: E402
+from roadwatch.video_io import VideoWriter, open_video  # noqa: E402
 WARMUP_FRAMES = 20
 
 
@@ -71,9 +71,7 @@ def main() -> int:
 
         if args.save:
             if writer is None:
-                fps_src = reader.info.fps
-                writer = cv2.VideoWriter(str(args.save), cv2.VideoWriter_fourcc(*"mp4v"),
-                                         fps_src, (frame.shape[1], frame.shape[0]))
+                writer = VideoWriter(args.save, reader.info.fps, (frame.shape[1], frame.shape[0]))
             writer.write(frame)
         if args.show:
             cv2.imshow("RoadWatch objects", frame)
@@ -90,7 +88,7 @@ def main() -> int:
     elapsed = time.perf_counter() - t_start
     reader.close()
     if writer:
-        writer.release()
+        writer.close()
     cv2.destroyAllWindows()
 
     if not n:

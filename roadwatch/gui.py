@@ -41,7 +41,7 @@ from roadwatch.perception.objects import ObjectDetector
 from roadwatch.perception.onnx_base import ModelNotAvailable
 from roadwatch.perception.signs import SignDetector
 from roadwatch.perception.workers import LatestFrameWorker
-from roadwatch.video_io import open_video
+from roadwatch.video_io import VideoWriter, next_free_path, open_video
 
 VIDEO_FILTER = "Video (*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.ts);;Tất cả (*)"
 CLASS_VI = {
@@ -60,6 +60,7 @@ class DetectWorker(QThread):
     frame_ready = Signal(QImage, dict)
     done = Signal(dict)
     failed = Signal(str)
+    recording = Signal(str, bool)  # (path, started) - started=False when a file is finalized
 
     def __init__(self, detector: ObjectDetector, path: str, realtime: bool, save_path: str | None,
                  lane_model: LaneModel | None = None, sign_model: SignDetector | None = None):
@@ -69,7 +70,8 @@ class DetectWorker(QThread):
         self.sign_model = sign_model
         self.path = path
         self.realtime = realtime
-        self.save_path = save_path
+        self._save_path = save_path
+        self._save_lock = threading.Lock()
         self._stop = threading.Event()
         self._resume = threading.Event()
         self._resume.set()
@@ -78,6 +80,11 @@ class DetectWorker(QThread):
         self._stop.set()
         self._resume.set()
 
+    def set_save_path(self, path: str | None) -> None:
+        """Start (path) or stop (None) recording; takes effect on the next frame."""
+        with self._save_lock:
+            self._save_path = path
+
     def set_paused(self, paused: bool) -> None:
         if paused:
             self._resume.clear()
@@ -85,8 +92,6 @@ class DetectWorker(QThread):
             self._resume.set()
 
     def run(self) -> None:
-        import cv2
-
         try:
             reader = open_video(self.path)
         except Exception as e:  # noqa: BLE001 - surface any open error to the UI
@@ -110,10 +115,17 @@ class DetectWorker(QThread):
                 max_staleness_frames=wcfg.max_staleness_frames, name="signs",
             )
         good_q = LaneConfig().good_quality
-        writer = None
-        if self.save_path:
-            writer = cv2.VideoWriter(self.save_path, cv2.VideoWriter_fourcc(*"mp4v"),
-                                     info.fps, (info.width, info.height))
+        writer: VideoWriter | None = None
+        saved: list[str] = []
+
+        def close_writer() -> None:
+            nonlocal writer
+            if writer is not None:
+                writer.close()
+                if writer.frames:
+                    saved.append(writer.path)
+                self.recording.emit(writer.path, False)
+                writer = None
         det_ms: deque[float] = deque(maxlen=300)
         loop_t: deque[float] = deque(maxlen=30)
         totals: Counter[str] = Counter()
@@ -152,6 +164,13 @@ class DetectWorker(QThread):
                     draw_signs(frame, sign_res.value)
                 draw_detections(frame, dets)
                 draw_status(frame, f"FPS {fps:.1f}  detect {dt:.1f} ms")
+                with self._save_lock:
+                    want = self._save_path
+                if writer is not None and writer.path != want:
+                    close_writer()
+                if want and writer is None:
+                    writer = VideoWriter(want, info.fps, (frame.shape[1], frame.shape[0]))
+                    self.recording.emit(want, True)
                 if writer is not None:
                     writer.write(frame)
 
@@ -202,8 +221,7 @@ class DetectWorker(QThread):
                 if wk is not None:
                     wk.stop()
             reader.close()
-            if writer is not None:
-                writer.release()
+            close_writer()
 
         elapsed = time.perf_counter() - t_start - paused_s
         arr = np.fromiter(det_ms, float) if det_ms else np.zeros(1)
@@ -213,7 +231,7 @@ class DetectWorker(QThread):
             "p50": float(np.percentile(arr, 50)),
             "p95": float(np.percentile(arr, 95)),
             "totals": dict(totals),
-            "saved": self.save_path if (self.save_path and n) else None,
+            "saved": saved,
             "stopped": self._stop.is_set(),
         })
 
@@ -251,6 +269,7 @@ class MainWindow(QMainWindow):
         self.lane_model = lane_model
         self.sign_model = sign_model
         self.worker: DetectWorker | None = None
+        self.current_path = ""
         self.setWindowTitle("RoadWatch — Nhận diện người/xe")
         self.resize(1400, 820)
         self.setAcceptDrops(True)
@@ -274,7 +293,10 @@ class MainWindow(QMainWindow):
         self.chk_realtime.setChecked(True)
         self.chk_realtime.setToolTip("Bỏ chọn để chạy nhanh nhất có thể (đo hiệu năng)")
         self.chk_save = QCheckBox("Lưu video kết quả")
-        self.chk_save.setToolTip("Ghi <tên>_roadwatch.mp4 cạnh video gốc")
+        self.chk_save.setToolTip("Ghi <tên>_roadwatch.mp4 cạnh video gốc; bật/tắt được khi đang chạy")
+        self.chk_save.toggled.connect(self.toggle_save)
+        self.rec_label = QLabel("")
+        self.rec_label.setStyleSheet("color:#d22; font-weight:bold; padding-left:8px;")
         self.chk_lanes = QCheckBox("Làn đường (YOLOP)")
         self.chk_lanes.setChecked(lane_model is not None)
         self.chk_lanes.setEnabled(lane_model is not None)
@@ -289,6 +311,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.chk_save)
         tb.addWidget(self.chk_lanes)
         tb.addWidget(self.chk_signs)
+        tb.addWidget(self.rec_label)
 
         self.view = VideoView()
         self.info = QLabel()
@@ -343,10 +366,8 @@ class MainWindow(QMainWindow):
 
     def start(self, path: str) -> None:
         self.stop_worker()
-        save_path = None
-        if self.chk_save.isChecked():
-            p = Path(path)
-            save_path = str(p.with_name(f"{p.stem}_roadwatch.mp4"))
+        self.current_path = path
+        save_path = self._next_save_path() if self.chk_save.isChecked() else None
         lane = self.lane_model if self.chk_lanes.isChecked() else None
         signs = self.sign_model if self.chk_signs.isChecked() else None
         self.worker = DetectWorker(self.detector, path, self.chk_realtime.isChecked(), save_path,
@@ -354,6 +375,7 @@ class MainWindow(QMainWindow):
         self.worker.frame_ready.connect(self.on_frame)
         self.worker.done.connect(self.on_done)
         self.worker.failed.connect(self.on_failed)
+        self.worker.recording.connect(self.on_recording)
         self.current = Path(path).name
         self.act_pause.setChecked(False)
         self.act_pause.setEnabled(True)
@@ -361,6 +383,21 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.statusBar().showMessage(f"Đang mở {self.current}…")
         self.worker.start()
+
+    def _next_save_path(self) -> str:
+        p = Path(self.current_path)
+        return str(next_free_path(p.with_name(f"{p.stem}_roadwatch.mp4")))
+
+    def toggle_save(self, on: bool) -> None:
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.set_save_path(self._next_save_path() if on else None)
+
+    def on_recording(self, path: str, started: bool) -> None:
+        if started:
+            self.rec_label.setText(f"● ĐANG GHI → {Path(path).name}")
+        else:
+            self.rec_label.setText("")
+            self.statusBar().showMessage(f"Đã lưu {path}", 10000)
 
     def toggle_pause(self, paused: bool) -> None:
         if self.worker:
@@ -422,7 +459,7 @@ class MainWindow(QMainWindow):
         msg = (f"{verb}: {s['frames']} frame, {s['fps']:.1f} FPS, "
                f"detect p50 {s['p50']:.1f} ms / p95 {s['p95']:.1f} ms")
         if s["saved"]:
-            msg += f" — đã lưu {Path(s['saved']).name}"
+            msg += " — đã lưu " + ", ".join(s["saved"])
         self.statusBar().showMessage(msg)
 
     def on_failed(self, text: str) -> None:

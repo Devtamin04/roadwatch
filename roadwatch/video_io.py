@@ -165,3 +165,69 @@ class VideoReader:
 
 def open_video(path: str | Path, max_width: int = 1280, force_ffmpeg: bool = False) -> VideoReader:
     return VideoReader(path, max_width=max_width, force_ffmpeg=force_ffmpeg)
+
+
+class VideoWriter:
+    """Write BGR frames to an H.264 MP4 via the system ffmpeg (widely playable).
+
+    Falls back to OpenCV's mp4v encoder if ffmpeg is not installed.
+    """
+
+    def __init__(self, path: str | Path, fps: float, size: tuple[int, int]):
+        self.path = str(path)
+        self.size = size  # (width, height)
+        self.frames = 0
+        self._proc: subprocess.Popen | None = None
+        self._cv: cv2.VideoWriter | None = None
+        w, h = size
+        if shutil.which("ffmpeg"):
+            self.backend = "ffmpeg-h264"
+            self._proc = subprocess.Popen(
+                ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24",
+                 "-s", f"{w}x{h}", "-r", f"{fps:.3f}", "-i", "-",
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", self.path],
+                stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            )
+        else:
+            self.backend = "opencv-mp4v"
+            self._cv = cv2.VideoWriter(self.path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+            if not self._cv.isOpened():
+                raise RuntimeError(f"Cannot open video writer for {self.path}")
+
+    def write(self, frame: np.ndarray) -> None:
+        if (frame.shape[1], frame.shape[0]) != self.size:
+            frame = cv2.resize(frame, self.size, interpolation=cv2.INTER_AREA)
+        if self._proc is not None and self._proc.stdin is not None:
+            self._proc.stdin.write(np.ascontiguousarray(frame).tobytes())
+        elif self._cv is not None:
+            self._cv.write(frame)
+        self.frames += 1
+
+    def close(self) -> None:
+        """Finalize the file (must be called, or the MP4 is unplayable)."""
+        if self._proc is not None:
+            if self._proc.stdin is not None:
+                self._proc.stdin.close()
+            self._proc.wait(timeout=60)
+            self._proc = None
+        if self._cv is not None:
+            self._cv.release()
+            self._cv = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def next_free_path(path: str | Path) -> Path:
+    """`path` if it does not exist, else path with _2, _3, ... before the suffix."""
+    p = Path(path)
+    if not p.exists():
+        return p
+    i = 2
+    while (candidate := p.with_name(f"{p.stem}_{i}{p.suffix}")).exists():
+        i += 1
+    return candidate

@@ -46,3 +46,31 @@ def test_reads_all_frames_and_downscales(tmp_path, force_ffmpeg):
 def test_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
         open_video(tmp_path / "nope.mp4")
+
+
+def test_writer_roundtrip_and_next_free_path(tmp_path):
+    from roadwatch.video_io import VideoWriter, next_free_path
+
+    out = tmp_path / "out.mp4"
+    with VideoWriter(out, 25.0, (320, 180)) as w:
+        for i in range(10):
+            f = np.zeros((360, 640, 3), np.uint8)  # different size -> resized by the writer
+            f[:, 40 * i:40 * i + 40] = 255
+            w.write(f)
+    assert w.frames == 10
+    with open_video(out) as r:
+        frames = list(r)
+    assert len(frames) == 10 and frames[0].shape == (180, 320, 3)
+    if shutil.which("ffprobe"):
+        import subprocess
+
+        codec = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=codec_name", "-of", "csv=p=0", str(out)], capture_output=True, text=True,
+        ).stdout.strip()
+        assert codec == "h264"
+
+    assert next_free_path(out) == tmp_path / "out_2.mp4"
+    (tmp_path / "out_2.mp4").touch()
+    assert next_free_path(out) == tmp_path / "out_3.mp4"
+    assert next_free_path(tmp_path / "new.mp4") == tmp_path / "new.mp4"
