@@ -99,6 +99,40 @@
         "toothbrush"
       ],
       "notes": "opset 12, simplify=True, dynamic=False"
+    },
+    {
+      "name": "yolop-320",
+      "file": "yolop-320-320.onnx",
+      "sha256": "86d6e8b6dfdef195c061e9bcad82d9487bb5ee1ac4a1cf9a3dc4736657a07369",
+      "input_shape": [
+        1,
+        3,
+        320,
+        320
+      ],
+      "source": "github.com/hustvl/YOLOP weights/",
+      "classes": [
+        "background",
+        "foreground"
+      ],
+      "notes": "MIT license. Outputs det_out (ignored), drive_area_seg, lane_line_seg; input RGB/255 normalised with ImageNet mean/std, letterbox pad 114."
+    },
+    {
+      "name": "yolop-640",
+      "file": "yolop-640-640.onnx",
+      "sha256": "cd66a3e0087a7258ae07768cc02cb742eed93865727ae4c9baf969b8fa190696",
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "source": "github.com/hustvl/YOLOP weights/",
+      "classes": [
+        "background",
+        "foreground"
+      ],
+      "notes": "MIT license. Outputs det_out (ignored), drive_area_seg, lane_line_seg; input RGB/255 normalised with ImageNet mean/std, letterbox pad 114."
     }
   ]
 }

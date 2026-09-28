@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
+import uuid
 from collections import Counter, deque
 from pathlib import Path
 
@@ -33,9 +34,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from roadwatch.hud import draw_detections, draw_status
+from roadwatch.config import LaneConfig, WorkerConfig
+from roadwatch.hud import draw_detections, draw_lanes, draw_status
+from roadwatch.perception.lanes import LaneModel, LanePipeline
 from roadwatch.perception.objects import ObjectDetector
 from roadwatch.perception.onnx_base import ModelNotAvailable
+from roadwatch.perception.workers import LatestFrameWorker
 from roadwatch.video_io import open_video
 
 VIDEO_FILTER = "Video (*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.ts);;Tất cả (*)"
@@ -56,9 +60,11 @@ class DetectWorker(QThread):
     done = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, detector: ObjectDetector, path: str, realtime: bool, save_path: str | None):
+    def __init__(self, detector: ObjectDetector, path: str, realtime: bool, save_path: str | None,
+                 lane_model: LaneModel | None = None):
         super().__init__()
         self.detector = detector
+        self.lane_model = lane_model
         self.path = path
         self.realtime = realtime
         self.save_path = save_path
@@ -86,6 +92,16 @@ class DetectWorker(QThread):
             return
 
         info = reader.info
+        session_id = uuid.uuid4().hex
+        wcfg = WorkerConfig()
+        lane_worker = None
+        if self.lane_model is not None:
+            # Fresh pipeline per video so lane smoothing/history never leaks across sessions.
+            lane_worker = LatestFrameWorker(
+                LanePipeline(self.lane_model), every_n=wcfg.lane_every_n,
+                max_staleness_frames=wcfg.max_staleness_frames, name="lane",
+            )
+        good_q = LaneConfig().good_quality
         writer = None
         if self.save_path:
             writer = cv2.VideoWriter(self.save_path, cv2.VideoWriter_fourcc(*"mp4v"),
@@ -108,6 +124,9 @@ class DetectWorker(QThread):
                 frame = reader.read()
                 if frame is None:
                     break
+                if lane_worker is not None:
+                    # Worker keeps a reference; hand it a copy since we draw on `frame`.
+                    lane_worker.submit(frame.copy(), session_id, n)
                 t0 = time.perf_counter()
                 dets = self.detector.detect(frame)
                 dt = (time.perf_counter() - t0) * 1000
@@ -115,6 +134,9 @@ class DetectWorker(QThread):
                 loop_t.append(time.perf_counter())
 
                 fps = (len(loop_t) - 1) / (loop_t[-1] - loop_t[0]) if len(loop_t) > 1 else 0.0
+                lane_res = lane_worker.get_latest_result(session_id, n) if lane_worker else None
+                if lane_res is not None:
+                    draw_lanes(frame, lane_res.value, good_q)
                 draw_detections(frame, dets)
                 draw_status(frame, f"FPS {fps:.1f}  detect {dt:.1f} ms")
                 if writer is not None:
@@ -137,6 +159,16 @@ class DetectWorker(QThread):
                     "size": f"{w}x{h}",
                     "backend": info.backend,
                     "src_fps": info.fps,
+                    "lane": None if lane_res is None else {
+                        "q": lane_res.value.state.quality,
+                        "cov": lane_res.value.state.coverage,
+                        "offset": lane_res.value.state.offset,
+                        "ms": lane_res.latency_ms,
+                        "age": n - lane_res.seq,
+                        "locked": lane_res.value.state.quality < good_q,
+                    },
+                    "lane_on": lane_worker is not None,
+                    "lane_dropped": lane_worker.stats.overwritten if lane_worker else 0,
                 })
 
                 if self.realtime:
@@ -147,6 +179,8 @@ class DetectWorker(QThread):
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"Lỗi khi xử lý video:\n{e}")
         finally:
+            if lane_worker is not None:
+                lane_worker.stop()
             reader.close()
             if writer is not None:
                 writer.release()
@@ -190,9 +224,10 @@ class VideoView(QLabel):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, detector: ObjectDetector):
+    def __init__(self, detector: ObjectDetector, lane_model: LaneModel | None = None):
         super().__init__()
         self.detector = detector
+        self.lane_model = lane_model
         self.worker: DetectWorker | None = None
         self.setWindowTitle("RoadWatch — Nhận diện người/xe")
         self.resize(1400, 820)
@@ -218,8 +253,14 @@ class MainWindow(QMainWindow):
         self.chk_realtime.setToolTip("Bỏ chọn để chạy nhanh nhất có thể (đo hiệu năng)")
         self.chk_save = QCheckBox("Lưu video kết quả")
         self.chk_save.setToolTip("Ghi <tên>_roadwatch.mp4 cạnh video gốc")
+        self.chk_lanes = QCheckBox("Làn đường (YOLOP)")
+        self.chk_lanes.setChecked(lane_model is not None)
+        self.chk_lanes.setEnabled(lane_model is not None)
+        if lane_model is None:
+            self.chk_lanes.setToolTip("Chưa có model YOLOP: chạy scripts/download_models.py")
         tb.addWidget(self.chk_realtime)
         tb.addWidget(self.chk_save)
+        tb.addWidget(self.chk_lanes)
 
         self.view = VideoView()
         self.info = QLabel()
@@ -264,7 +305,8 @@ class MainWindow(QMainWindow):
         if self.chk_save.isChecked():
             p = Path(path)
             save_path = str(p.with_name(f"{p.stem}_roadwatch.mp4"))
-        self.worker = DetectWorker(self.detector, path, self.chk_realtime.isChecked(), save_path)
+        lane = self.lane_model if self.chk_lanes.isChecked() else None
+        self.worker = DetectWorker(self.detector, path, self.chk_realtime.isChecked(), save_path, lane)
         self.worker.frame_ready.connect(self.on_frame)
         self.worker.done.connect(self.on_done)
         self.worker.failed.connect(self.on_failed)
@@ -301,6 +343,20 @@ class MainWindow(QMainWindow):
             for k, v in sorted(s["counts"].items(), key=lambda kv: -kv[1])
         ) or "&nbsp;&nbsp;(không có)<br>"
         ok = "#2a2" if s["p95"] <= 40 else "#d33"
+        if not s["lane_on"]:
+            lane = "&nbsp;&nbsp;(tắt)<br>"
+        elif s["lane"] is None:
+            lane = "&nbsp;&nbsp;(đang chờ kết quả)<br>"
+        else:
+            ln = s["lane"]
+            state = ("<span style='color:#d33'>KHOÁ (chất lượng thấp)</span>" if ln["locked"]
+                     else "<span style='color:#2a2'>OK</span>")
+            off = f"{ln['offset']:+.2f}" if ln["offset"] is not None else "--"
+            lane = (f"&nbsp;&nbsp;Trạng thái: {state}<br>"
+                    f"&nbsp;&nbsp;Chất lượng: <b>{ln['q']:.2f}</b> (phủ {ln['cov']:.2f})<br>"
+                    f"&nbsp;&nbsp;Lệch tâm làn: {off}<br>"
+                    f"&nbsp;&nbsp;YOLOP: {ln['ms']:.0f} ms, trễ {ln['age']} frame<br>"
+                    f"&nbsp;&nbsp;Frame bỏ qua: {s['lane_dropped']}<br>")
         self.info.setText(
             f"<b>Video</b><br>{self.current}<br>{s['size']} @ {s['src_fps']:.0f} fps, "
             f"đọc bằng {s['backend']}<br><br>"
@@ -309,6 +365,7 @@ class MainWindow(QMainWindow):
             f"Detect: {s['det_ms']:.1f} ms<br>"
             f"p50 / p95: {s['p50']:.1f} / <span style='color:{ok}'>{s['p95']:.1f}</span> ms<br>"
             f"<small>(mục tiêu ≤ 40 ms)</small><br><br>"
+            f"<b>Làn đường</b><br>{lane}<br>"
             f"<b>Trong frame này</b><br>{counts}"
         )
         self.statusBar().showMessage(f"Đang chạy {self.current}")
@@ -354,7 +411,12 @@ def main(argv: list[str] | None = None) -> int:
             "--imgsz 320 --name yolo11n_320",
         )
         return 1
-    win = MainWindow(detector)
+    try:
+        lane_model = LaneModel(num_threads=LaneConfig().num_threads)
+    except ModelNotAvailable as e:
+        print(f"Lane module disabled: {e}", file=sys.stderr)
+        lane_model = None
+    win = MainWindow(detector, lane_model)
     win.show()
     if len(argv) > 1:
         win.start(argv[1])
