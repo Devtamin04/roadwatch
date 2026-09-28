@@ -1,4 +1,4 @@
-"""Desktop GUI: open any video and watch person/vehicle detection live.
+"""Desktop GUI: open any video and watch the perception pipeline live.
 
     python -m roadwatch.gui                 # then click "Mở video" or drag a file in
     python -m roadwatch.gui path/to/video   # start immediately
@@ -9,6 +9,7 @@ AV1) are streamed through the system ffmpeg automatically.
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 import time
@@ -34,13 +35,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from roadwatch.config import LaneConfig, WorkerConfig
-from roadwatch.hud import draw_detections, draw_lanes, draw_signs, draw_status
-from roadwatch.perception.lanes import LaneModel, LanePipeline
+from roadwatch.hud import draw_perception, draw_status
+from roadwatch.perception.engine import PerceptionEngine, load_models
+from roadwatch.perception.lanes import LaneModel
 from roadwatch.perception.objects import ObjectDetector
-from roadwatch.perception.onnx_base import ModelNotAvailable
 from roadwatch.perception.signs import SignDetector
-from roadwatch.perception.workers import LatestFrameWorker
+from roadwatch.types import Frame
 from roadwatch.video_io import VideoWriter, next_free_path, open_video
 
 VIDEO_FILTER = "Video (*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.ts);;Tất cả (*)"
@@ -100,21 +100,9 @@ class DetectWorker(QThread):
 
         info = reader.info
         session_id = uuid.uuid4().hex
-        wcfg = WorkerConfig()
-        lane_worker = None
-        if self.lane_model is not None:
-            # Fresh pipeline per video so lane smoothing/history never leaks across sessions.
-            lane_worker = LatestFrameWorker(
-                LanePipeline(self.lane_model), every_n=wcfg.lane_every_n,
-                max_staleness_frames=wcfg.max_staleness_frames, name="lane",
-            )
-        sign_worker = None
-        if self.sign_model is not None:
-            sign_worker = LatestFrameWorker(
-                self.sign_model.detect, every_n=wcfg.sign_every_n,
-                max_staleness_frames=wcfg.max_staleness_frames, name="signs",
-            )
-        good_q = LaneConfig().good_quality
+        # New engine (workers + lane smoothing) per video; the loaded models are reused.
+        engine = PerceptionEngine(self.detector, self.lane_model, self.sign_model)
+        good_q = engine.config.lanes.good_quality
         writer: VideoWriter | None = None
         saved: list[str] = []
 
@@ -126,6 +114,7 @@ class DetectWorker(QThread):
                     saved.append(writer.path)
                 self.recording.emit(writer.path, False)
                 writer = None
+
         det_ms: deque[float] = deque(maxlen=300)
         loop_t: deque[float] = deque(maxlen=30)
         totals: Counter[str] = Counter()
@@ -141,45 +130,34 @@ class DetectWorker(QThread):
                     if self._stop.is_set():
                         break
 
-                frame = reader.read()
-                if frame is None:
+                image = reader.read()
+                if image is None:
                     break
-                if lane_worker is not None:
-                    # Worker keeps a reference; hand it a copy since we draw on `frame`.
-                    lane_worker.submit(frame.copy(), session_id, n)
-                if sign_worker is not None:
-                    sign_worker.submit(frame.copy(), session_id, n)
-                t0 = time.perf_counter()
-                dets = self.detector.detect(frame)
-                dt = (time.perf_counter() - t0) * 1000
+                res = engine.process(Frame(image, n / info.fps, n, session_id))
+                dt = res.timings_ms.get("objects", 0.0)
                 det_ms.append(dt)
                 loop_t.append(time.perf_counter())
-
                 fps = (len(loop_t) - 1) / (loop_t[-1] - loop_t[0]) if len(loop_t) > 1 else 0.0
-                lane_res = lane_worker.get_latest_result(session_id, n) if lane_worker else None
-                if lane_res is not None:
-                    draw_lanes(frame, lane_res.value, good_q)
-                sign_res = sign_worker.get_latest_result(session_id, n) if sign_worker else None
-                if sign_res is not None:
-                    draw_signs(frame, sign_res.value)
-                draw_detections(frame, dets)
-                draw_status(frame, f"FPS {fps:.1f}  detect {dt:.1f} ms")
+
+                draw_perception(image, res, good_q)
+                draw_status(image, f"FPS {fps:.1f}  detect {dt:.1f} ms")
                 with self._save_lock:
                     want = self._save_path
                 if writer is not None and writer.path != want:
                     close_writer()
                 if want and writer is None:
-                    writer = VideoWriter(want, info.fps, (frame.shape[1], frame.shape[0]))
+                    writer = VideoWriter(want, info.fps, (image.shape[1], image.shape[0]))
                     self.recording.emit(want, True)
                 if writer is not None:
-                    writer.write(frame)
+                    writer.write(image)
 
-                counts = Counter(d.cls for d in dets)
+                counts = Counter(d.cls for d in res.detections)
                 totals.update(counts)
                 n += 1
                 arr = np.fromiter(det_ms, float)
-                h, w = frame.shape[:2]
-                img = QImage(frame.data, w, h, 3 * w, QImage.Format.Format_BGR888).copy()
+                h, w = image.shape[:2]
+                img = QImage(image.data, w, h, 3 * w, QImage.Format.Format_BGR888).copy()
+                stats = engine.worker_stats()
                 self.frame_ready.emit(img, {
                     "frame": n,
                     "total": info.frame_count,
@@ -191,22 +169,22 @@ class DetectWorker(QThread):
                     "size": f"{w}x{h}",
                     "backend": info.backend,
                     "src_fps": info.fps,
-                    "lane": None if lane_res is None else {
-                        "q": lane_res.value.state.quality,
-                        "cov": lane_res.value.state.coverage,
-                        "offset": lane_res.value.state.offset,
-                        "ms": lane_res.latency_ms,
-                        "age": n - lane_res.seq,
-                        "locked": lane_res.value.state.quality < good_q,
+                    "lane": None if res.lane is None else {
+                        "q": res.lane.quality,
+                        "cov": res.lane.coverage,
+                        "offset": res.lane.offset,
+                        "ms": res.timings_ms["lanes"],
+                        "age": res.result_age["lanes"],
+                        "locked": res.lane.quality < good_q,
                     },
-                    "lane_on": lane_worker is not None,
-                    "signs_on": sign_worker is not None,
-                    "signs": None if sign_res is None else {
-                        "items": [(d.name_vi, d.conf, d.group) for d in sign_res.value],
-                        "ms": sign_res.latency_ms,
-                        "age": n - sign_res.seq,
+                    "lane_on": res.modules_enabled["lanes"],
+                    "signs_on": res.modules_enabled["signs"],
+                    "signs": None if res.signs is None else {
+                        "items": [(r.name_vi, r.det_conf, r.group) for r in res.signs],
+                        "ms": res.timings_ms["signs"],
+                        "age": res.result_age["signs"],
                     },
-                    "lane_dropped": lane_worker.stats.overwritten if lane_worker else 0,
+                    "lane_dropped": stats["lanes"].overwritten if "lanes" in stats else 0,
                 })
 
                 if self.realtime:
@@ -217,9 +195,7 @@ class DetectWorker(QThread):
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"Lỗi khi xử lý video:\n{e}")
         finally:
-            for wk in (lane_worker, sign_worker):
-                if wk is not None:
-                    wk.stop()
+            engine.close()
             reader.close()
             close_writer()
 
@@ -483,26 +459,16 @@ class MainWindow(QMainWindow):
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv if argv is None else argv
     app = QApplication(argv)
-    try:
-        detector = ObjectDetector()
-    except ModelNotAvailable as e:
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    detector, lane_model, sign_model = load_models()
+    if detector is None:
         QMessageBox.critical(
             None, "RoadWatch",
-            f"{e}\n\nHãy export model trước:\n"
+            "Thiếu model phát hiện người/xe (models/yolo11n_320.onnx).\n\nHãy export model trước:\n"
             ".venv-export/bin/python scripts/export_yolo_onnx.py --weights yolo11n.pt "
             "--imgsz 320 --name yolo11n_320",
         )
         return 1
-    try:
-        lane_model = LaneModel(num_threads=LaneConfig().num_threads)
-    except ModelNotAvailable as e:
-        print(f"Lane module disabled: {e}", file=sys.stderr)
-        lane_model = None
-    try:
-        sign_model = SignDetector()
-    except ModelNotAvailable as e:
-        print(f"Sign module disabled: {e}", file=sys.stderr)
-        sign_model = None
     win = MainWindow(detector, lane_model, sign_model)
     win.show()
     if len(argv) > 1:

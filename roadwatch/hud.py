@@ -80,16 +80,26 @@ SIGN_COLORS = {  # BGR
 
 
 def draw_signs(frame: np.ndarray, signs) -> np.ndarray:
-    """Draw sign boxes with an ASCII label (QCVN code, speed value if any)."""
+    """Draw SignReading boxes with an ASCII label (QCVN code, speed value if any)."""
     for s in signs:
         x1, y1, x2, y2 = map(int, s.xyxy)
         color = SIGN_COLORS.get(s.group, (200, 200, 200))
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
-        label = f"{s.code}" + (f" {s.class_speed_value}km/h" if s.is_speed_limit else "")
-        label += f" {s.conf:.2f}"
+        label = f"{s.code}" + (f" {s.speed_value}km/h" if s.is_speed_limit else "")
+        label += f" {s.det_conf:.2f}"
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
         y_text = y2 + th + 6 if y1 < th + 8 else y1 - 6
         cv2.rectangle(frame, (x1, y_text - th - 4), (x1 + tw + 4, y_text + 4), color, -1)
         cv2.putText(frame, label, (x1 + 2, y_text), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                     (255, 255, 255), 2, cv2.LINE_AA)
+    return frame
+
+
+def draw_perception(frame: np.ndarray, result, good_lane_quality: float = 0.6) -> np.ndarray:
+    """Draw everything in a PerceptionResult: lanes (bottom layer), signs, objects."""
+    if result.lane_frame is not None:
+        draw_lanes(frame, result.lane_frame, good_lane_quality)
+    if result.signs:
+        draw_signs(frame, result.signs)
+    draw_detections(frame, result.detections)
     return frame

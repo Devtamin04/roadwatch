@@ -225,7 +225,22 @@ class LanePipeline:
     def __init__(self, model: LaneModel, extractor: LaneStateExtractor | None = None):
         self.model = model
         self.extractor = extractor or LaneStateExtractor(model.lane_config)
+        self._generation = 0  # bumped by reset(); read in the worker thread
+
+    def reset(self) -> None:
+        """Drop smoothing/history (new session). Safe to call from another thread:
+        the extractor is reset lazily by the worker thread on its next call."""
+        self._generation += 1
 
     def __call__(self, img_bgr: np.ndarray) -> LaneFrame:
+        gen = self._generation
+        if gen != getattr(self, "_seen_generation", 0):
+            self.extractor.reset()
+            self._seen_generation = gen
         lane_mask, da_mask = self.model.segment(img_bgr)
-        return LaneFrame(self.extractor.update(lane_mask, da_mask), lane_mask, da_mask)
+        state = self.extractor.update(lane_mask, da_mask)
+        if self._generation != gen:
+            # A reset arrived mid-call: this frame belongs to the old session.
+            self.extractor.reset()
+            self._seen_generation = self._generation
+        return LaneFrame(state, lane_mask, da_mask)

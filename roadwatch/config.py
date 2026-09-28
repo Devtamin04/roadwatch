@@ -103,3 +103,14 @@ class SignConfig:
     conf_thr: float = 0.5
     iou_thr: float = 0.5
     num_threads: int = 2
+
+
+@dataclass
+class PerceptionConfig:
+    objects: ObjectDetectorConfig = field(default_factory=ObjectDetectorConfig)
+    lanes: LaneConfig = field(default_factory=LaneConfig)
+    signs: SignConfig = field(default_factory=SignConfig)
+    workers: WorkerConfig = field(default_factory=WorkerConfig)
+    enable_objects: bool = True
+    enable_lanes: bool = True
+    enable_signs: bool = True
