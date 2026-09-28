@@ -5,5 +5,10 @@ __pycache__/
 models/*.onnx
 models/*.pt
 videos/
+video/
 *.mp4
+*.avi
+*.mov
+*.mkv
+.claude/settings.local.json
 *.jsonl
