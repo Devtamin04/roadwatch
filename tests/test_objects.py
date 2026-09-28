@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 
-import cv2
 import numpy as np
 import pytest
 
@@ -101,9 +100,8 @@ def test_postprocess_maps_to_original_image(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- integration
 
 MODEL = ObjectDetectorConfig().model_path
-# Default is an H.264 720p copy: the pip OpenCV build cannot decode the AV1 originals.
 VIDEO = Path(
-    os.environ.get("ROADWATCH_TEST_VIDEO", Path(__file__).parents[1] / "video/segment_000_720p.mp4")
+    os.environ.get("ROADWATCH_TEST_VIDEO", Path(__file__).parents[1] / "video/segment_000.mp4")
 )
 
 
@@ -113,16 +111,16 @@ VIDEO = Path(
 def test_detects_vehicle_on_sample_video():
     from roadwatch.perception.objects import ObjectDetector
 
+    from roadwatch.video_io import open_video
+
     det = ObjectDetector()
-    cap = cv2.VideoCapture(str(VIDEO))
     vehicles = frames = 0
-    for _ in range(30):
-        ok, frame = cap.read()
-        if not ok:
-            break
-        frames += 1
-        vehicles += sum(d.cls in {"car", "bus", "truck", "motorcycle"} for d in det.detect(frame))
-    cap.release()
+    with open_video(VIDEO) as reader:
+        for frame in reader:
+            frames += 1
+            vehicles += sum(d.cls in {"car", "bus", "truck", "motorcycle"} for d in det.detect(frame))
+            if frames == 30:
+                break
     if frames == 0:
-        pytest.skip(f"OpenCV cannot decode {VIDEO}")
+        pytest.skip(f"cannot decode {VIDEO}")
     assert vehicles >= 1

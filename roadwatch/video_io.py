@@ -36,6 +36,25 @@ def _scaled_size(w: int, h: int, max_width: int) -> tuple[int, int]:
     return w, h
 
 
+# Codecs the pip OpenCV build cannot decode in software.
+FFMPEG_ONLY_CODECS = {"av1"}
+
+
+def _probe_codec(path: str) -> str | None:
+    """Video codec name via ffprobe, or None if ffprobe is unavailable/fails."""
+    if not shutil.which("ffprobe"):
+        return None
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
 class VideoReader:
     """Iterate BGR frames of a video file. Use `open_video()` to construct."""
 
@@ -48,7 +67,9 @@ class VideoReader:
         self._proc: subprocess.Popen | None = None
         self._first: np.ndarray | None = None
 
-        if not force_ffmpeg and self._try_opencv():
+        # Skip OpenCV for codecs it cannot decode: avoids its noisy decoder errors.
+        use_ffmpeg = force_ffmpeg or _probe_codec(self.path) in FFMPEG_ONLY_CODECS
+        if not use_ffmpeg and self._try_opencv():
             return
         self._open_ffmpeg()
 

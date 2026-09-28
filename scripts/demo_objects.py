@@ -1,7 +1,6 @@
 """Run the person/vehicle detector on a video, draw boxes, report FPS and latency.
 
-    python scripts/demo_objects.py --source video/segment_000_720p.mp4 --show
-    python scripts/demo_objects.py --source video/segment_000.mp4 --max-frames 300  # AV1 ok
+    python scripts/demo_objects.py --source video/segment_000.mp4 --show
 """
 
 from __future__ import annotations
