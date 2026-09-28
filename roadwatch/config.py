@@ -43,3 +43,12 @@ class ObjectDetectorConfig:
     conf_thr: float = 0.35
     iou_thr: float = 0.5
     keep_classes: dict[int, str] = field(default_factory=lambda: dict(COCO_KEEP_CLASSES))
+
+
+@dataclass
+class WorkerConfig:
+    # Results older than this many frames (vs. the current frame) are ignored.
+    max_staleness_frames: int = 10
+    sign_every_n: int = 3
+    lane_every_n: int = 2
+    stop_timeout_s: float = 2.0
