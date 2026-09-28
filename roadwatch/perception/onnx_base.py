@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from pathlib import Path
 
@@ -12,6 +10,17 @@ import numpy as np
 import onnxruntime as ort
 
 from roadwatch.config import OnnxConfig
+from roadwatch.manifest import load_manifest_entry, sha256_file
+
+__all__ = [
+    "ChecksumMismatch",
+    "ModelNotAvailable",
+    "OnnxModel",
+    "letterbox",
+    "nms",
+    "scale_boxes_back",
+    "sha256_file",
+]
 
 log = logging.getLogger(__name__)
 
@@ -22,26 +31,6 @@ class ModelNotAvailable(RuntimeError):
 
 class ChecksumMismatch(RuntimeError):
     """Model file SHA256 does not match models/manifest.json."""
-
-
-def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while block := f.read(chunk):
-            h.update(block)
-    return h.hexdigest()
-
-
-def load_manifest_entry(manifest_path: Path, model_file: Path) -> dict | None:
-    """Return the manifest entry whose `file` matches model_file's name, or None."""
-    if not manifest_path.exists():
-        return None
-    with open(manifest_path, encoding="utf-8") as f:
-        manifest = json.load(f)
-    for entry in manifest.get("models", []):
-        if entry.get("file") and Path(entry["file"]).name == model_file.name:
-            return entry
-    return None
 
 
 def _dim_or_none(dim) -> int | None:
