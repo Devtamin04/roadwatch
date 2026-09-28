@@ -158,18 +158,26 @@ VIDEO = Path(__file__).parents[1] / "video/segment_001.mp4"
 @pytest.mark.models
 @pytest.mark.skipif(not VIDEO.exists(), reason="sample video missing")
 def test_real_models_on_video():
-    from roadwatch.video_io import open_video
-
+    """100 frames paced at the video fps (like a live camera): no crash, all modules produce."""
     objects, lanes, signs = load_models()
     if objects is None:
         pytest.skip("object model missing")
-    with PerceptionEngine(objects, lanes, signs) as eng, open_video(VIDEO) as reader:
+    with PerceptionEngine(objects, lanes, signs) as eng:
+        eng.pin_caller_to_foreground()
         results = []
-        for seq, img in enumerate(reader):
-            results.append(eng.process(Frame(img, seq / reader.info.fps, seq, "it")))
-            if seq == 99:
-                break
+        with eng.open_video(VIDEO) as reader:
+            fps = reader.info.fps
+            t0 = time.perf_counter()
+            for seq, img in enumerate(reader):
+                results.append(eng.process(Frame(img, seq / fps, seq, "it")))
+                delay = t0 + (seq + 1) / fps - time.perf_counter()
+                if delay > 0:
+                    time.sleep(delay)
+                if seq == 99:
+                    break
     assert len(results) == 100
     assert any(r.detections for r in results)
     if lanes is not None:
         assert any(r.lane is not None for r in results)
+    if signs is not None:
+        assert any(r.signs is not None for r in results)

@@ -58,7 +58,7 @@ def load_sign_classes(path: Path) -> list[SignClass]:
 
 def model_class_names(model: OnnxModel) -> dict[int, str] | None:
     """Class names embedded by Ultralytics in the ONNX metadata, if any."""
-    raw = model.session.get_modelmeta().custom_metadata_map.get("names")
+    raw = model.metadata().get("names")
     return ast.literal_eval(raw) if raw else None
 
 
@@ -92,6 +92,8 @@ class SignDetector(OnnxModel):
             num_threads=num_threads or self.sign_config.num_threads,
             default_hw=(self.sign_config.imgsz, self.sign_config.imgsz),
             config=onnx_config,
+            core_type=self.sign_config.core_type,
+            backend=self.sign_config.backend,
         )
         self.classes = load_sign_classes(self.sign_config.classes_path)
         names = model_class_names(self)

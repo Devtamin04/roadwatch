@@ -70,6 +70,27 @@ def fetch(name: str, spec: dict) -> None:
     print(f"{dest.name}: registered sha256={digest}")
 
 
+def derive_yolop_seg_only(size: int) -> None:
+    """YOLOP without its detection head (unused by RoadWatch): ~12% faster, same masks."""
+    from onnx.utils import extract_model
+
+    src = MODELS_DIR / f"yolop-{size}-{size}.onnx"
+    dest = MODELS_DIR / f"yolop-{size}-{size}-seg.onnx"
+    src_entry = load_manifest_entry(MANIFEST, src)
+    if src_entry is None or sha256_file(src) != src_entry["sha256"]:
+        raise SystemExit(f"{src.name} missing or not verified; download it first")
+    if not dest.exists():
+        extract_model(str(src), str(dest), ["images"], ["drive_area_seg", "lane_line_seg"])
+    upsert_manifest_entry(MANIFEST, {
+        "name": f"yolop-{size}-seg", "file": dest.name, "sha256": sha256_file(dest),
+        "input_shape": [1, 3, size, size],
+        "source": f"derived from {src.name} (sha256 {src_entry['sha256'][:12]}...) with "
+                  "onnx.utils.extract_model, outputs drive_area_seg + lane_line_seg only",
+        "classes": ["background", "foreground"], "notes": YOLOP_NOTES,
+    })
+    print(f"{dest.name}: registered")
+
+
 def main(argv: list[str]) -> int:
     names = argv or list(SOURCES)
     unknown = [n for n in names if n not in SOURCES]
@@ -79,6 +100,8 @@ def main(argv: list[str]) -> int:
     MODELS_DIR.mkdir(exist_ok=True)
     for n in names:
         fetch(n, SOURCES[n])
+        if n.startswith("yolop-"):
+            derive_yolop_seg_only(int(n.split("-")[1]))
     return 0
 
 

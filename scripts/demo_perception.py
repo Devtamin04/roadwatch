@@ -28,7 +28,7 @@ from roadwatch.config import PerceptionConfig  # noqa: E402
 from roadwatch.hud import draw_perception, draw_status  # noqa: E402
 from roadwatch.perception.engine import PerceptionEngine, load_models  # noqa: E402
 from roadwatch.types import Frame  # noqa: E402
-from roadwatch.video_io import VideoWriter, open_video  # noqa: E402
+from roadwatch.video_io import VideoWriter  # noqa: E402
 
 WARMUP_FRAMES = 20
 STAGES = ["read", "objects", "signs", "lanes", "draw", "loop"]
@@ -59,11 +59,16 @@ def main() -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     cfg = PerceptionConfig(enable_signs=not args.no_signs, enable_lanes=not args.no_lanes)
     objects, lanes, signs = load_models(cfg)
-    reader = open_video(args.source)
+    engine = PerceptionEngine(objects, lanes, signs, cfg)
+    engine.pin_caller_to_foreground()
+    reader = engine.open_video(args.source)
     info = reader.info
     print(f"Video {info.width}x{info.height} @ {info.fps:.1f} fps via {info.backend}")
     print("Modules:", {"objects": objects is not None, "signs": signs is not None,
                        "lanes": lanes is not None})
+    if engine.foreground_cpus:
+        print(f"CPU placement: main loop + objects on {sorted(engine.foreground_cpus)}, "
+              f"workers + decoding on {sorted(engine.background_cpus)}")
 
     session = uuid.uuid4().hex
     samples: dict[str, list[float]] = defaultdict(list)
@@ -72,7 +77,7 @@ def main() -> int:
     n = 0
     t_start = time.perf_counter()
     last_print = t_start
-    with PerceptionEngine(objects, lanes, signs, cfg) as engine:
+    with engine:
         while True:
             t0 = time.perf_counter()
             image = reader.read()

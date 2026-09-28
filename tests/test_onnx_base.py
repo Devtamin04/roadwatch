@@ -134,3 +134,20 @@ def test_require_manifest_entry(tmp_path, cfg):
     cfg.require_manifest_entry = True
     with pytest.raises(ChecksumMismatch, match="no sha256 entry"):
         OnnxModel(path, config=cfg)
+
+
+def test_openvino_backend_matches_onnxruntime(tmp_path, cfg):
+    pytest.importorskip("openvino")
+    path = make_identity_model(tmp_path / "m.onnx", [1, 3, 32, 48])
+    x = np.random.rand(1, 3, 32, 48).astype(np.float32)
+    ort_m = OnnxModel(path, config=cfg, backend="onnxruntime")
+    ov_m = OnnxModel(path, config=cfg, backend="openvino", core_type="ecore")
+    assert (ov_m.backend, ov_m.input_hw, ov_m.output_names) == ("openvino", (32, 48), ["output0"])
+    np.testing.assert_allclose(ov_m.run(x)["output0"], ort_m.run(x)["output0"])
+    assert ov_m.run(x, ["output0"]).keys() == {"output0"}
+
+
+def test_unknown_backend_rejected(tmp_path, cfg):
+    path = make_identity_model(tmp_path / "m.onnx", [1, 3, 8, 8])
+    with pytest.raises(ValueError, match="unknown backend"):
+        OnnxModel(path, config=cfg, backend="tensorrt")

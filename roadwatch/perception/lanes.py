@@ -52,6 +52,8 @@ class LaneModel(OnnxModel):
             num_threads=num_threads or self.lane_config.num_threads,
             default_hw=(self.lane_config.imgsz, self.lane_config.imgsz),
             config=onnx_config,
+            core_type=self.lane_config.core_type,
+            backend=self.lane_config.backend,
         )
         self.lane_output = self._find_output(self.lane_config.lane_output_key)
         self.drivable_output = self._find_output(self.lane_config.drivable_output_key)
@@ -83,7 +85,8 @@ class LaneModel(OnnxModel):
         """Return (lane_mask, drivable_mask) as bool arrays at the original image size."""
         h0, w0 = img_bgr.shape[:2]
         x, ratio, (pad_w, pad_h) = self.preprocess(img_bgr)
-        lane_out, da_out = self.session.run(self._fetch, {self.input_name: x})
+        out = self.run(x, self._fetch)
+        lane_out, da_out = out[self.lane_output], out[self.drivable_output]
         top, left = int(pad_h), int(pad_w)
         uh, uw = round(h0 * ratio), round(w0 * ratio)
         masks = []

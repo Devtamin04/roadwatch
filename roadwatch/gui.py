@@ -41,7 +41,7 @@ from roadwatch.perception.lanes import LaneModel
 from roadwatch.perception.objects import ObjectDetector
 from roadwatch.perception.signs import SignDetector
 from roadwatch.types import Frame
-from roadwatch.video_io import VideoWriter, next_free_path, open_video
+from roadwatch.video_io import VideoWriter, next_free_path
 
 VIDEO_FILTER = "Video (*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.ts);;Tất cả (*)"
 CLASS_VI = {
@@ -92,16 +92,18 @@ class DetectWorker(QThread):
             self._resume.set()
 
     def run(self) -> None:
+        # New engine (workers + lane smoothing) per video; the loaded models are reused.
+        engine = PerceptionEngine(self.detector, self.lane_model, self.sign_model)
+        engine.pin_caller_to_foreground()
         try:
-            reader = open_video(self.path)
+            reader = engine.open_video(self.path)
         except Exception as e:  # noqa: BLE001 - surface any open error to the UI
+            engine.close()
             self.failed.emit(f"Không mở được video:\n{e}")
             return
 
         info = reader.info
         session_id = uuid.uuid4().hex
-        # New engine (workers + lane smoothing) per video; the loaded models are reused.
-        engine = PerceptionEngine(self.detector, self.lane_model, self.sign_model)
         good_q = engine.config.lanes.good_quality
         writer: VideoWriter | None = None
         saved: list[str] = []
@@ -315,9 +317,8 @@ class MainWindow(QMainWindow):
     # -- helpers ---------------------------------------------------------
     def _model_html(self) -> str:
         d = self.detector
-        threads = d.session.get_session_options().intra_op_num_threads
         return (f"<b>Model</b><br>{d.path.name}<br>input {d.input_hw[1]}×{d.input_hw[0]}, "
-                f"{threads} thread CPU<br>")
+                f"{d.num_threads} thread, {d.backend}<br>")
 
     @staticmethod
     def _signs_html(s: dict) -> str:

@@ -3,7 +3,12 @@ onnxruntime>=1.17
 opencv-python>=4.8
 numpy>=1.24
 scipy>=1.10
+onnx>=1.15  # deriving yolop-*-seg.onnx, model metadata, tests
+
+# Optional: OpenVINO backend (backend="openvino"). Off by default; see
+# docs/perception_benchmark.md. Its package ships telemetry: opt out locally with
+#   mkdir -p ~/intel && printf 0 > ~/intel/openvino_telemetry
+# openvino>=2024.4
 
 # Dev / test
 pytest>=7.4
-onnx>=1.15  # used only by tests to build tiny fake ONNX models

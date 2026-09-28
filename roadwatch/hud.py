@@ -36,6 +36,28 @@ def draw_status(frame: np.ndarray, text: str) -> np.ndarray:
     return frame
 
 
+# label 0 = none, 1 = drivable, 2 = lane line (lane wins where both are set).
+_MASK_LUT = np.zeros((256, 1, 3), np.uint8)
+_MASK_LUT[1, 0] = (0, 180, 0)
+_MASK_LUT[2, 0] = (255, 0, 255)
+
+
+def _tint_masks(frame: np.ndarray, drivable: np.ndarray, lane: np.ndarray,
+                alpha: float = 0.35) -> None:
+    """Blend mask colours into frame in place, only over the rows the masks cover."""
+    rows = np.flatnonzero(drivable.any(axis=1) | lane.any(axis=1))
+    if rows.size == 0:
+        return
+    y0, y1 = int(rows[0]), int(rows[-1]) + 1
+    label = drivable[y0:y1].view(np.uint8) + 2 * lane[y0:y1].view(np.uint8)
+    np.minimum(label, 2, out=label)
+    roi = frame[y0:y1]
+    # OpenCV LUT/copyTo are ~10x faster than numpy fancy indexing / copyto(where=).
+    colors = cv2.LUT(cv2.merge([label, label, label]), _MASK_LUT)
+    blended = cv2.addWeighted(colors, alpha, roi, 1 - alpha, 0)
+    cv2.copyTo(blended, (label > 0).view(np.uint8), roi)
+
+
 def draw_lanes(frame: np.ndarray, lane_frame, good_quality: float = 0.6,
                show_masks: bool = True) -> np.ndarray:
     """Overlay drivable area (green tint), lane-line pixels (magenta) and lane borders.
@@ -45,10 +67,7 @@ def draw_lanes(frame: np.ndarray, lane_frame, good_quality: float = 0.6,
     """
     st = lane_frame.state
     if show_masks:
-        tint = frame.copy()
-        tint[lane_frame.drivable_mask] = (0, 180, 0)
-        tint[lane_frame.lane_mask] = (255, 0, 255)
-        cv2.addWeighted(tint, 0.35, frame, 0.65, 0, dst=frame)
+        _tint_masks(frame, lane_frame.drivable_mask, lane_frame.lane_mask)
 
     locked = st.quality < good_quality
     if not locked:

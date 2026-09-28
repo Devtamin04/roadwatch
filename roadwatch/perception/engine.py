@@ -13,6 +13,7 @@ from roadwatch.config import PerceptionConfig
 from roadwatch.perception.lanes import LaneFrame, LaneModel, LanePipeline, LaneState
 from roadwatch.perception.onnx_base import ModelNotAvailable
 from roadwatch.perception.speed_digits import SignReading, read_speed_sign
+from roadwatch.cpu import call_in_thread, pin_current_thread, placement
 from roadwatch.perception.workers import LatestFrameWorker
 from roadwatch.types import Detection, Frame
 
@@ -49,6 +50,7 @@ class PerceptionEngine:
     ):
         self.config = config or PerceptionConfig()
         wcfg = self.config.workers
+        self.foreground_cpus, self.background_cpus = placement(wcfg.place_on_hybrid_cores)
         self.object_detector = object_detector
         self.sign_detector = sign_detector
         self.lane_pipeline = LanePipeline(lane_model) if lane_model is not None else None
@@ -59,12 +61,14 @@ class PerceptionEngine:
         }
         self.sign_worker = (
             LatestFrameWorker(self._read_signs, every_n=wcfg.sign_every_n,
-                              max_staleness_frames=wcfg.max_staleness_frames, name="signs")
+                              max_staleness_frames=wcfg.max_staleness_frames, name="signs",
+                              nice=wcfg.worker_nice, cpus=self.background_cpus)
             if sign_detector is not None else None
         )
         self.lane_worker = (
             LatestFrameWorker(self.lane_pipeline, every_n=wcfg.lane_every_n,
-                              max_staleness_frames=wcfg.max_staleness_frames, name="lanes")
+                              max_staleness_frames=wcfg.max_staleness_frames, name="lanes",
+                              nice=wcfg.worker_nice, cpus=self.background_cpus)
             if self.lane_pipeline is not None else None
         )
         self._session: str | None = None
@@ -80,6 +84,18 @@ class PerceptionEngine:
         return [read_speed_sign(d) for d in self.sign_detector.detect(img)]
 
     # -- API -------------------------------------------------------------
+    def pin_caller_to_foreground(self) -> None:
+        """Call once from the thread that runs process() (P-cores on hybrid CPUs)."""
+        pin_current_thread(self.foreground_cpus)
+
+    def open_video(self, path, max_width: int = 1280):
+        """Open a video whose decoding runs ahead on the background cores."""
+        from roadwatch.video_io import open_video
+
+        w = self.config.workers
+        return open_video(path, max_width=max_width, prefetch=w.decode_prefetch,
+                          cpus=self.background_cpus, nice=w.worker_nice)
+
     def reset(self, session_id: str) -> None:
         """New source or seek: forget all worker results and lane smoothing."""
         self._session = session_id
@@ -160,7 +176,10 @@ class PerceptionEngine:
 def load_models(config: PerceptionConfig | None = None):
     """Load (objects, lanes, signs) models; a missing model disables its module.
 
-    Each missing model is logged once, here, at load time.
+    Each missing model is logged once, here, at load time. Models are created
+    in threads that already have their CPU placement (P-cores for objects,
+    E-cores + WorkerConfig.worker_nice for lanes/signs) so the inference thread
+    pools inherit it.
     """
     from roadwatch.perception.objects import ObjectDetector
     from roadwatch.perception.signs import SignDetector
@@ -176,7 +195,12 @@ def load_models(config: PerceptionConfig | None = None):
             log.warning("%s module disabled: %s", name, e)
             return None
 
-    objects = try_load("objects", config.enable_objects, lambda: ObjectDetector(config.objects))
-    lanes = try_load("lanes", config.enable_lanes, lambda: LaneModel(config.lanes))
-    signs = try_load("signs", config.enable_signs, lambda: SignDetector(config.signs))
+    fg, bg = placement(config.workers.place_on_hybrid_cores)
+    nice = config.workers.worker_nice
+    objects = try_load("objects", config.enable_objects, lambda: call_in_thread(
+        lambda: ObjectDetector(config.objects), 0, fg))
+    lanes = try_load("lanes", config.enable_lanes, lambda: call_in_thread(
+        lambda: LaneModel(config.lanes), nice, bg))
+    signs = try_load("signs", config.enable_signs, lambda: call_in_thread(
+        lambda: SignDetector(config.signs), nice, bg))
     return objects, lanes, signs

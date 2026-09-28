@@ -16,6 +16,8 @@ from typing import Any, Callable
 
 import numpy as np
 
+from roadwatch.cpu import lower_thread_priority, pin_current_thread
+
 log = logging.getLogger(__name__)
 
 
@@ -44,6 +46,8 @@ class LatestFrameWorker:
         every_n: int = 1,
         max_staleness_frames: int = 10,
         name: str = "worker",
+        nice: int = 0,
+        cpus: set[int] | None = None,
     ):
         if every_n < 1:
             raise ValueError("every_n must be >= 1")
@@ -51,6 +55,8 @@ class LatestFrameWorker:
         self.every_n = every_n
         self.max_staleness_frames = max_staleness_frames
         self.name = name
+        self.nice = nice
+        self.cpus = cpus
         self.stats = WorkerStats()
 
         self._cond = threading.Condition()
@@ -136,6 +142,8 @@ class LatestFrameWorker:
 
     # -- worker thread ---------------------------------------------------
     def _loop(self) -> None:
+        pin_current_thread(self.cpus)
+        lower_thread_priority(self.nice)
         while True:
             with self._cond:
                 while self._running and self._slot is None:

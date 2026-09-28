@@ -40,13 +40,32 @@ def _dim_or_none(dim) -> int | None:
     return None
 
 
-class OnnxModel:
-    """CPU-only ONNX Runtime wrapper.
+def _resolve_backend(name: str) -> str:
+    if name not in ("auto", "openvino", "onnxruntime"):
+        raise ValueError(f"unknown backend {name!r}")
+    if name == "onnxruntime":
+        return name
+    try:
+        import openvino  # noqa: F401
+    except ImportError:
+        if name == "openvino":
+            raise
+        return "onnxruntime"
+    return "openvino"
 
-    Input/output names and shapes are read from the session. For the first
+
+_OV_CORE_TYPES = {"any": "ANY_CORE", "pcore": "PCORE_ONLY", "ecore": "ECORE_ONLY"}
+
+
+class OnnxModel:
+    """CPU-only inference wrapper for an ONNX file (ONNX Runtime or OpenVINO).
+
+    Input/output names and shapes are read from the model. For the first
     input (assumed NCHW), fixed H/W dims are honoured; dynamic dims fall back
     to `default_hw`. The model's SHA256 is verified against the manifest when
-    an entry exists.
+    an entry exists. `backend` overrides config.backend for this model.
+    `core_type` ("any" | "pcore" | "ecore") restricts OpenVINO inference to
+    performance/efficiency cores on hybrid Intel CPUs; ignored by ONNX Runtime.
     """
 
     def __init__(
@@ -55,6 +74,8 @@ class OnnxModel:
         num_threads: int | None = None,
         default_hw: tuple[int, int] = (320, 320),
         config: OnnxConfig | None = None,
+        core_type: str = "any",
+        backend: str | None = None,
     ):
         self.config = config or OnnxConfig()
         self.path = Path(path)
@@ -62,21 +83,14 @@ class OnnxModel:
             raise ModelNotAvailable(f"Model file not found: {self.path}")
 
         self.manifest_entry = self._verify_checksum()
+        self.num_threads = num_threads or self.config.num_threads
+        self.backend = _resolve_backend(backend or self.config.backend)
+        self.core_type = core_type
 
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = num_threads or self.config.num_threads
-        opts.inter_op_num_threads = 1
-        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        self.session = ort.InferenceSession(
-            str(self.path), sess_options=opts, providers=["CPUExecutionProvider"]
-        )
-
-        inputs = self.session.get_inputs()
-        outputs = self.session.get_outputs()
-        self.input_name: str = inputs[0].name
-        self.input_shape: list = list(inputs[0].shape)
-        self.output_names: list[str] = [o.name for o in outputs]
-        self.output_shapes: dict[str, list] = {o.name: list(o.shape) for o in outputs}
+        if self.backend == "openvino":
+            self._init_openvino()
+        else:
+            self._init_onnxruntime()
 
         if len(self.input_shape) != 4:
             raise ValueError(
@@ -87,14 +101,63 @@ class OnnxModel:
         self.input_hw: tuple[int, int] = (h or default_hw[0], w or default_hw[1])
 
         log.info(
-            "Loaded %s: input %s %s -> using HxW=%s%s; outputs %s",
-            self.path.name,
-            self.input_name,
-            self.input_shape,
-            self.input_hw,
-            " (dynamic)" if self.is_dynamic else "",
-            self.output_shapes,
+            "Loaded %s [%s, %d threads, %s]: input %s %s -> using HxW=%s%s; outputs %s",
+            self.path.name, self.backend, self.num_threads, self.core_type,
+            self.input_name, self.input_shape, self.input_hw,
+            " (dynamic)" if self.is_dynamic else "", self.output_shapes,
         )
+
+    def _init_onnxruntime(self) -> None:
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = self.num_threads
+        opts.inter_op_num_threads = 1
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.session = ort.InferenceSession(
+            str(self.path), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
+        inputs, outputs = self.session.get_inputs(), self.session.get_outputs()
+        self.input_name: str = inputs[0].name
+        self.input_shape: list = list(inputs[0].shape)
+        self.output_names: list[str] = [o.name for o in outputs]
+        self.output_shapes: dict[str, list] = {o.name: list(o.shape) for o in outputs}
+
+    def _init_openvino(self) -> None:
+        import openvino as ov
+
+        core = ov.Core()
+        model = core.read_model(str(self.path))
+
+        def dims(pshape) -> list:
+            return [d.get_length() if d.is_static else None for d in pshape]
+
+        self.input_name = model.inputs[0].get_any_name()
+        self.input_shape = dims(model.inputs[0].get_partial_shape())
+        self.output_names = [o.get_any_name() for o in model.outputs]
+        self.output_shapes = {o.get_any_name(): dims(o.get_partial_shape()) for o in model.outputs}
+        # No CPU pinning: pinned threads of concurrently running models (and of
+        # ONNX Runtime sessions) would compete for the same cores.
+        props = {"INFERENCE_NUM_THREADS": self.num_threads, "PERFORMANCE_HINT": "LATENCY",
+                 "ENABLE_CPU_PINNING": False}
+        if self.core_type != "any":
+            props["SCHEDULING_CORE_TYPE"] = _OV_CORE_TYPES[self.core_type]
+        try:
+            compiled = core.compile_model(model, "CPU", props)
+        except RuntimeError:
+            # Non-hybrid CPU (no E-cores) rejects core-type pinning: fall back to any core.
+            props.pop("SCHEDULING_CORE_TYPE", None)
+            compiled = core.compile_model(model, "CPU", props)
+            self.core_type = "any"
+        self._request = compiled.create_infer_request()
+        self._ov_outputs = list(compiled.outputs)
+
+    def metadata(self) -> dict[str, str]:
+        """ONNX metadata_props (e.g. Ultralytics `names`, `imgsz`)."""
+        if self.backend == "onnxruntime":
+            return dict(self.session.get_modelmeta().custom_metadata_map)
+        import onnx
+
+        m = onnx.load(str(self.path), load_external_data=False)
+        return {p.key: p.value for p in m.metadata_props}
 
     def _verify_checksum(self) -> dict | None:
         entry = load_manifest_entry(self.config.manifest_path, self.path)
@@ -113,10 +176,17 @@ class OnnxModel:
             )
         return entry
 
-    def run(self, tensor: np.ndarray) -> dict[str, np.ndarray]:
-        """Run inference on a prepared NCHW float32 tensor; returns {output_name: array}."""
-        results = self.session.run(self.output_names, {self.input_name: tensor})
-        return dict(zip(self.output_names, results))
+    def run(self, tensor: np.ndarray, outputs: list[str] | None = None) -> dict[str, np.ndarray]:
+        """Run inference on a prepared NCHW float32 tensor; returns {output_name: array}.
+
+        Not thread-safe per instance: each model is used by a single thread.
+        """
+        names = outputs or self.output_names
+        if self.backend == "onnxruntime":
+            return dict(zip(names, self.session.run(names, {self.input_name: tensor})))
+        res = self._request.infer({0: tensor})
+        by_name = {port.get_any_name(): res[port] for port in self._ov_outputs}
+        return {n: by_name[n] for n in names}
 
 
 def letterbox(

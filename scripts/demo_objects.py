@@ -42,7 +42,7 @@ def main() -> int:
     if args.model:
         cfg.model_path = args.model
     det = ObjectDetector(cfg, num_threads=args.threads)
-    print(f"Model {det.path.name}: input HxW={det.input_hw}, threads={det.session.get_session_options().intra_op_num_threads}")
+    print(f"Model {det.path.name}: input HxW={det.input_hw}, threads={det.num_threads}, backend={det.backend}")
 
     reader = open_video(args.source, max_width=args.resize_width)
     print(f"Video {reader.info.width}x{reader.info.height} @ {reader.info.fps:.1f} fps "

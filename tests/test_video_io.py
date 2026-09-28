@@ -74,3 +74,28 @@ def test_writer_roundtrip_and_next_free_path(tmp_path):
     (tmp_path / "out_2.mp4").touch()
     assert next_free_path(out) == tmp_path / "out_3.mp4"
     assert next_free_path(tmp_path / "new.mp4") == tmp_path / "new.mp4"
+
+
+@pytest.mark.parametrize("force_ffmpeg", [False, True])
+def test_prefetch_reader_matches_plain_reader(tmp_path, force_ffmpeg):
+    if force_ffmpeg and not shutil.which("ffmpeg"):
+        pytest.skip("no ffmpeg")
+    path = write_video(tmp_path / "v.mp4", n=12)
+    with open_video(path, max_width=320, force_ffmpeg=force_ffmpeg) as r:
+        plain = list(r)
+    with open_video(path, max_width=320, force_ffmpeg=force_ffmpeg, prefetch=2) as r:
+        assert r.info.width == 320
+        pre = list(r)
+        assert r.read() is None  # stays at end
+    assert len(pre) == len(plain) == 12
+    assert all(np.array_equal(a, b) for a, b in zip(plain, pre))
+
+
+def test_prefetch_reader_close_early_and_errors(tmp_path):
+    path = write_video(tmp_path / "v.mp4", n=30)
+    r = open_video(path, prefetch=2)
+    assert r.read() is not None
+    r.close()  # producer blocked on a full queue must still exit
+    assert not r._thread.is_alive()
+    with pytest.raises(FileNotFoundError):
+        open_video(tmp_path / "missing.mp4", prefetch=2)

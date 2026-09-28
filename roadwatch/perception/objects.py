@@ -20,9 +20,11 @@ class ObjectDetector(OnnxModel):
         self.det_config = config or ObjectDetectorConfig()
         super().__init__(
             self.det_config.model_path,
-            num_threads=num_threads,
+            num_threads=num_threads or self.det_config.num_threads,
             default_hw=(self.det_config.imgsz, self.det_config.imgsz),
             config=onnx_config,
+            core_type=self.det_config.core_type,
+            backend=self.det_config.backend,
         )
         if len(self.output_names) != 1:
             raise ValueError(

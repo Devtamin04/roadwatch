@@ -8,14 +8,18 @@ the system `ffmpeg` binary instead. Frames are downscaled to `max_width`.
 from __future__ import annotations
 
 import json
+import queue
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
 import cv2
 import numpy as np
+
+from roadwatch.cpu import lower_thread_priority, pin_current_thread
 
 
 @dataclass
@@ -163,7 +167,97 @@ class VideoReader:
         self.close()
 
 
-def open_video(path: str | Path, max_width: int = 1280, force_ffmpeg: bool = False) -> VideoReader:
+class PrefetchReader:
+    """Decode ahead in a background thread (bounded queue; no frames are dropped).
+
+    The underlying reader is opened inside that thread, after its CPU affinity
+    and priority are set, so decoder threads (OpenCV/FFmpeg) or the ffmpeg
+    child process inherit the placement and stay off the foreground cores.
+    """
+
+    def __init__(self, path: str | Path, max_width: int = 1280, force_ffmpeg: bool = False,
+                 queue_size: int = 4, cpus: set[int] | None = None, nice: int = 0):
+        self._queue: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=queue_size)
+        self._stop = threading.Event()
+        self._ready = threading.Event()
+        self._error: BaseException | None = None
+        self._done = False
+        self._thread = threading.Thread(
+            target=self._run, args=(path, max_width, force_ffmpeg, cpus, nice),
+            name="rw-decode", daemon=True,
+        )
+        self._thread.start()
+        self._ready.wait()
+        if self._error is not None:
+            raise self._error
+
+    def _run(self, path, max_width, force_ffmpeg, cpus, nice) -> None:
+        pin_current_thread(cpus)
+        lower_thread_priority(nice)
+        try:
+            reader = VideoReader(path, max_width=max_width, force_ffmpeg=force_ffmpeg)
+        except BaseException as e:  # noqa: BLE001 - re-raised in the constructor
+            self._error = e
+            self._ready.set()
+            return
+        self.info = reader.info
+        self._ready.set()
+        try:
+            while not self._stop.is_set():
+                frame = reader.read()
+                while not self._stop.is_set():
+                    try:
+                        self._queue.put(frame, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                if frame is None:
+                    break
+        finally:
+            reader.close()
+
+    def read(self) -> np.ndarray | None:
+        """Next BGR frame, or None at end of stream."""
+        if self._done:
+            return None
+        frame = self._queue.get()
+        if frame is None:
+            self._done = True
+        return frame
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        while (frame := self.read()) is not None:
+            yield frame
+
+    def close(self) -> None:
+        self._stop.set()
+        self._done = True
+        while True:  # unblock a producer waiting on a full queue
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+        self._thread.join(timeout=5)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def open_video(
+    path: str | Path,
+    max_width: int = 1280,
+    force_ffmpeg: bool = False,
+    prefetch: int = 0,
+    cpus: set[int] | None = None,
+    nice: int = 0,
+) -> VideoReader | PrefetchReader:
+    """Open a video file. prefetch > 0 decodes up to that many frames ahead in a
+    background thread placed on `cpus` with the given nice value."""
+    if prefetch > 0:
+        return PrefetchReader(path, max_width, force_ffmpeg, prefetch, cpus, nice)
     return VideoReader(path, max_width=max_width, force_ffmpeg=force_ffmpeg)
 
 

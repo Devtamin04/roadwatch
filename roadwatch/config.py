@@ -21,6 +21,12 @@ class OnnxConfig:
     manifest_path: Path = MODELS_DIR / "manifest.json"
     # Refuse to load a model whose file is not listed in the manifest.
     require_manifest_entry: bool = False
+    # Default backend for models whose own config does not set one:
+    # "onnxruntime" | "openvino" | "auto" (OpenVINO if installed). OpenVINO is optional
+    # and off by default: several OpenVINO models in one process slowed the others
+    # down in our benchmark, and its pip package ships usage telemetry (opt out with
+    # ~/intel/openvino_telemetry containing "0").
+    backend: str = "onnxruntime"
 
 
 # COCO class ids kept for the person/vehicle detector.
@@ -42,6 +48,10 @@ class ObjectDetectorConfig:
     num_classes: int = 80
     conf_thr: float = 0.35
     iou_thr: float = 0.5
+    # Runs on the foreground (P-)cores; see docs/perception_benchmark.md.
+    backend: str | None = None
+    num_threads: int = 8
+    core_type: str = "any"  # "any" | "pcore" | "ecore" (OpenVINO on hybrid Intel CPUs only)
     keep_classes: dict[int, str] = field(default_factory=lambda: dict(COCO_KEEP_CLASSES))
 
 
@@ -52,15 +62,30 @@ class WorkerConfig:
     sign_every_n: int = 3
     lane_every_n: int = 2
     stop_timeout_s: float = 2.0
+    # Linux nice value for background work (sign/lane workers, their inference thread
+    # pools, video decoding) so the per-frame object detector wins contention. 0 = off.
+    worker_nice: int = 10
+    # On hybrid Intel CPUs run the main loop + object detector on P-cores and all
+    # background work on E-cores. This removed most of the contention in
+    # docs/perception_benchmark.md. Ignored on non-hybrid CPUs.
+    place_on_hybrid_cores: bool = True
+    # Frames decoded ahead by the background decode thread.
+    decode_prefetch: int = 4
+
+
+def default_lane_model() -> Path:
+    """Prefer YOLOP without the (unused) detection head; see scripts/download_models.py."""
+    seg_only = MODELS_DIR / "yolop-320-320-seg.onnx"
+    return seg_only if seg_only.exists() else MODELS_DIR / "yolop-320-320.onnx"
 
 
 @dataclass
 class LaneConfig:
-    model_path: Path = MODELS_DIR / "yolop-320-320.onnx"
+    model_path: Path = field(default_factory=default_lane_model)
     imgsz: int = 320  # only used if the model input is dynamic
-    # Runs concurrently with the object detector; 4 keeps lane results fresh
-    # (<10 frames old) at 30 fps on an i7-1260P while detect p95 stays < 40 ms.
+    backend: str | None = None
     num_threads: int = 4
+    core_type: str = "any"
     mean: tuple[float, float, float] = (0.485, 0.456, 0.406)
     std: tuple[float, float, float] = (0.229, 0.224, 0.225)
     # Output names are matched by substring; the loader fails loudly if absent.
@@ -102,7 +127,9 @@ class SignConfig:
     imgsz: int = 416  # only used if the model input is dynamic
     conf_thr: float = 0.5
     iou_thr: float = 0.5
+    backend: str | None = None
     num_threads: int = 2
+    core_type: str = "any"
 
 
 @dataclass
