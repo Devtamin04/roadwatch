@@ -74,15 +74,18 @@ class WorkerConfig:
 
 
 def default_lane_model() -> Path:
-    """Prefer YOLOP without the (unused) detection head; see scripts/download_models.py."""
-    seg_only = MODELS_DIR / "yolop-320-320-seg.onnx"
-    return seg_only if seg_only.exists() else MODELS_DIR / "yolop-320-320.onnx"
+    """YOLOP 640 (release lane model), preferring the variant without the unused
+    detection head (identical masks, derived by scripts/download_models.py)."""
+    for name in ("yolop-640-640-seg.onnx", "yolop-640-640.onnx"):
+        if (MODELS_DIR / name).exists():
+            return MODELS_DIR / name
+    return MODELS_DIR / "yolop-640-640-seg.onnx"
 
 
 @dataclass
 class LaneConfig:
     model_path: Path = field(default_factory=default_lane_model)
-    imgsz: int = 320  # only used if the model input is dynamic
+    imgsz: int = 640  # only used if the model input is dynamic
     backend: str | None = None
     num_threads: int = 4
     core_type: str = "any"
@@ -134,10 +137,31 @@ class SignConfig:
 
 @dataclass
 class PerceptionConfig:
+    # "replay": every frame gets sign/lane results computed on schedule (every_n) in
+    # the calling thread; nothing is dropped, throughput is whatever the CPU allows.
+    # This is the release stack's cloud-CPU replay setting and the default.
+    # "live": signs/lanes run in latest-frame workers and stale results are dropped
+    # so the object detector keeps real-time pace (camera input).
+    mode: str = "replay"
     objects: ObjectDetectorConfig = field(default_factory=ObjectDetectorConfig)
     lanes: LaneConfig = field(default_factory=LaneConfig)
     signs: SignConfig = field(default_factory=SignConfig)
+    speed_digits: SpeedDigitConfig = field(default_factory=lambda: SpeedDigitConfig())
     workers: WorkerConfig = field(default_factory=WorkerConfig)
     enable_objects: bool = True
     enable_lanes: bool = True
     enable_signs: bool = True
+
+
+@dataclass
+class SpeedDigitConfig:
+    """C. Speed-limit value classifier on sign crops (see scripts/train_speed_digits.py)."""
+
+    model_path: Path = MODELS_DIR / "speed_digits_64.onnx"
+    classes_path: Path = MODELS_DIR / "speed_digits_64_classes.json"
+    expand: float = 0.10  # crop = sign box grown by this fraction on each side
+    # Readings below this softmax confidence are reported as unknown (value None).
+    min_conf: float = 0.6
+    backend: str | None = None
+    num_threads: int = 1
+    core_type: str = "any"

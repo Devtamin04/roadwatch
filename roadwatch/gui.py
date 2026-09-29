@@ -2,6 +2,7 @@
 
     python -m roadwatch.gui                 # then click "Mở video" or drag a file in
     python -m roadwatch.gui path/to/video   # start immediately
+    python -m roadwatch.gui --live video    # live mode: drop stale sign/lane results
 
 Requires PySide6 (requirements-gui.txt). Videos OpenCV cannot decode (e.g.
 AV1) are streamed through the system ffmpeg automatically.
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from roadwatch.hud import draw_perception, draw_status
+from roadwatch.config import PerceptionConfig
 from roadwatch.perception.engine import PerceptionEngine, load_models
 from roadwatch.perception.lanes import LaneModel
 from roadwatch.perception.objects import ObjectDetector
@@ -63,8 +65,10 @@ class DetectWorker(QThread):
     recording = Signal(str, bool)  # (path, started) - started=False when a file is finalized
 
     def __init__(self, detector: ObjectDetector, path: str, realtime: bool, save_path: str | None,
-                 lane_model: LaneModel | None = None, sign_model: SignDetector | None = None):
+                 lane_model: LaneModel | None = None, sign_model: SignDetector | None = None,
+                 config: PerceptionConfig | None = None):
         super().__init__()
+        self.config = config
         self.detector = detector
         self.lane_model = lane_model
         self.sign_model = sign_model
@@ -93,7 +97,7 @@ class DetectWorker(QThread):
 
     def run(self) -> None:
         # New engine (workers + lane smoothing) per video; the loaded models are reused.
-        engine = PerceptionEngine(self.detector, self.lane_model, self.sign_model)
+        engine = PerceptionEngine(self.detector, self.lane_model, self.sign_model, self.config)
         engine.pin_caller_to_foreground()
         try:
             reader = engine.open_video(self.path)
@@ -182,7 +186,8 @@ class DetectWorker(QThread):
                     "lane_on": res.modules_enabled["lanes"],
                     "signs_on": res.modules_enabled["signs"],
                     "signs": None if res.signs is None else {
-                        "items": [(r.name_vi, r.det_conf, r.group) for r in res.signs],
+                        "items": [(r.name_vi, r.det_conf, r.group, r.speed_value, r.source,
+                                   r.cls_conf, r.is_speed_limit) for r in res.signs],
                         "ms": res.timings_ms["signs"],
                         "age": res.result_age["signs"],
                     },
@@ -241,14 +246,17 @@ class VideoView(QLabel):
 
 class MainWindow(QMainWindow):
     def __init__(self, detector: ObjectDetector, lane_model: LaneModel | None = None,
-                 sign_model: SignDetector | None = None):
+                 sign_model: SignDetector | None = None,
+                 config: PerceptionConfig | None = None):
         super().__init__()
         self.detector = detector
         self.lane_model = lane_model
         self.sign_model = sign_model
+        self.config = config or PerceptionConfig()
         self.worker: DetectWorker | None = None
         self.current_path = ""
-        self.setWindowTitle("RoadWatch — Nhận diện người/xe")
+        mode = "live" if self.config.mode == "live" else "replay (xử lý đủ mọi frame)"
+        self.setWindowTitle(f"RoadWatch — Nhận diện — chế độ {mode}")
         self.resize(1400, 820)
         self.setAcceptDrops(True)
 
@@ -328,10 +336,16 @@ class MainWindow(QMainWindow):
             return "&nbsp;&nbsp;(đang chờ kết quả)<br>"
         sg = s["signs"]
         colors = {"speed_limit": "#d22", "prohibition": "#c40", "warning": "#b80", "mandatory": "#15c"}
-        items = "".join(
-            f"&nbsp;&nbsp;<span style='color:{colors.get(g, '#555')}'>● {name}</span> ({conf:.2f})<br>"
-            for name, conf, g in sg["items"]
-        ) or "&nbsp;&nbsp;(không thấy biển)<br>"
+        def line(name, conf, g, value, source, cls_conf, is_limit):
+            text = f"&nbsp;&nbsp;<span style='color:{colors.get(g, '#555')}'>● {name}</span> ({conf:.2f})"
+            if is_limit and source == "digit_classifier":
+                read = f"{value} km/h" if value is not None else "không chắc / không phải biển tốc độ"
+                text += f"<br>&nbsp;&nbsp;&nbsp;&nbsp;<small>đọc số: <b>{read}</b> ({cls_conf:.2f})</small>"
+            elif is_limit:
+                text += "<br>&nbsp;&nbsp;&nbsp;&nbsp;<small>(giá trị từ tên lớp, chưa có bộ đọc số)</small>"
+            return text + "<br>"
+
+        items = "".join(line(*it) for it in sg["items"]) or "&nbsp;&nbsp;(không thấy biển)<br>"
         return items + f"&nbsp;&nbsp;<small>model {sg['ms']:.0f} ms, trễ {sg['age']} frame</small><br>"
 
     # -- actions ---------------------------------------------------------
@@ -348,7 +362,7 @@ class MainWindow(QMainWindow):
         lane = self.lane_model if self.chk_lanes.isChecked() else None
         signs = self.sign_model if self.chk_signs.isChecked() else None
         self.worker = DetectWorker(self.detector, path, self.chk_realtime.isChecked(), save_path,
-                                   lane, signs)
+                                   lane, signs, self.config)
         self.worker.frame_ready.connect(self.on_frame)
         self.worker.done.connect(self.on_done)
         self.worker.failed.connect(self.on_failed)
@@ -461,7 +475,10 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv if argv is None else argv
     app = QApplication(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    detector, lane_model, sign_model = load_models()
+    live = "--live" in argv
+    argv = [a for a in argv if a != "--live"]
+    config = PerceptionConfig(mode="live" if live else "replay")
+    detector, lane_model, sign_model = load_models(config)
     if detector is None:
         QMessageBox.critical(
             None, "RoadWatch",
@@ -470,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
             "--imgsz 320 --name yolo11n_320",
         )
         return 1
-    win = MainWindow(detector, lane_model, sign_model)
+    win = MainWindow(detector, lane_model, sign_model, config)
     win.show()
     if len(argv) > 1:
         win.start(argv[1])

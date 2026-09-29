@@ -12,6 +12,7 @@ from roadwatch.perception.speed_digits import read_speed_sign
 from roadwatch.types import Detection, Frame
 
 H, W = 180, 320
+LIVE = PerceptionConfig(mode="live")
 
 
 class FakeObjects:
@@ -58,7 +59,7 @@ def run_until(engine, pred, session="s", start=0, limit=200):
 
 
 def test_all_modules_produce_results():
-    with PerceptionEngine(FakeObjects(), FakeLaneModel(), FakeSigns()) as eng:
+    with PerceptionEngine(FakeObjects(), FakeLaneModel(), FakeSigns(), LIVE) as eng:
         res = run_until(eng, lambda r: r.signs is not None and r.lane is not None)
     assert res.modules_enabled == {"objects": True, "signs": True, "lanes": True}
     assert res.detections[0].cls == "car"
@@ -73,7 +74,7 @@ def test_all_modules_produce_results():
 def test_engine_runs_with_a_module_disabled(missing):
     mods = {"objects": FakeObjects(), "lanes": FakeLaneModel(), "signs": FakeSigns()}
     mods[missing] = None
-    with PerceptionEngine(mods["objects"], mods["lanes"], mods["signs"]) as eng:
+    with PerceptionEngine(mods["objects"], mods["lanes"], mods["signs"], LIVE) as eng:
         results = [eng.process(frame(i)) for i in range(20)]
         time.sleep(0.05)
         results.append(eng.process(frame(20)))
@@ -105,7 +106,7 @@ def test_load_models_disables_missing_files(tmp_path, caplog):
 
 def test_session_change_never_returns_old_results():
     gate = threading.Event()
-    with PerceptionEngine(FakeObjects(), None, FakeSigns(gate=gate)) as eng:
+    with PerceptionEngine(FakeObjects(), None, FakeSigns(gate=gate), LIVE) as eng:
         eng.process(frame(0, "A", value=200))  # worker now blocked inside fn for session A
         time.sleep(0.05)
         res_b = eng.process(frame(0, "B", value=10))  # new session: reset
@@ -123,7 +124,7 @@ def test_session_change_never_returns_old_results():
 
 
 def test_lane_smoothing_is_reset_between_sessions():
-    with PerceptionEngine(None, FakeLaneModel(), None) as eng:
+    with PerceptionEngine(None, FakeLaneModel(), None, LIVE) as eng:
         run_until(eng, lambda r: r.lane is not None, session="A")
         ext = eng.lane_pipeline.extractor
         assert len(ext._widths) > 0
@@ -134,12 +135,55 @@ def test_lane_smoothing_is_reset_between_sessions():
 
 
 def test_objects_do_not_wait_for_slow_workers():
-    with PerceptionEngine(FakeObjects(), None, FakeSigns(delay=0.3)) as eng:
+    with PerceptionEngine(FakeObjects(), None, FakeSigns(delay=0.3), LIVE) as eng:
         t = time.perf_counter()
         for i in range(10):
             eng.process(frame(i))
         elapsed = time.perf_counter() - t
     assert elapsed < 0.2  # 10 frames while one sign call takes 0.3 s
+
+
+class CountingSigns(FakeSigns):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def detect(self, img):
+        self.calls.append(int(img[1, 1, 1]))
+        return super().detect(img)
+
+
+def seq_frame(seq, session="s"):
+    f = frame(seq, session)
+    f.image[1, 1, 1] = seq % 256  # lets the fake record which frame it saw
+    return f
+
+
+def test_replay_runs_modules_on_schedule_and_never_drops():
+    signs = CountingSigns()
+    cfg = PerceptionConfig(mode="replay")
+    with PerceptionEngine(FakeObjects(), FakeLaneModel(), signs, cfg) as eng:
+        assert eng.sign_worker is None and eng.lane_worker is None
+        results = [eng.process(seq_frame(i)) for i in range(10)]
+    assert all(r.signs is not None and r.lane is not None for r in results)
+    assert signs.calls == [0, 3, 6, 9]  # every sign_every_n=3 frames
+    assert [r.result_age["signs"] for r in results] == [0, 1, 2] * 3 + [0]
+    assert [r.result_age["lanes"] for r in results] == [0, 1] * 5
+
+
+def test_replay_session_change_recomputes_immediately():
+    signs = CountingSigns()
+    with PerceptionEngine(None, None, signs, PerceptionConfig(mode="replay")) as eng:
+        eng.process(seq_frame(0, "A"))
+        eng.process(seq_frame(1, "A"))
+        res = eng.process(seq_frame(1, "B"))  # new session mid-schedule
+    assert signs.calls == [0, 1]  # B's first frame is computed, not A's result reused
+    assert res.result_age["signs"] == 0
+
+
+def test_unknown_mode_rejected():
+    with pytest.raises(ValueError, match="unknown mode"):
+        PerceptionEngine(None, config=PerceptionConfig(mode="turbo"))
 
 
 def test_read_speed_sign_with_classifier():
@@ -159,10 +203,11 @@ VIDEO = Path(__file__).parents[1] / "video/segment_001.mp4"
 @pytest.mark.skipif(not VIDEO.exists(), reason="sample video missing")
 def test_real_models_on_video():
     """100 frames paced at the video fps (like a live camera): no crash, all modules produce."""
-    objects, lanes, signs = load_models()
+    cfg = PerceptionConfig(mode="live")
+    objects, lanes, signs = load_models(cfg)
     if objects is None:
         pytest.skip("object model missing")
-    with PerceptionEngine(objects, lanes, signs) as eng:
+    with PerceptionEngine(objects, lanes, signs, cfg) as eng:
         eng.pin_caller_to_foreground()
         results = []
         with eng.open_video(VIDEO) as reader:
@@ -177,7 +222,24 @@ def test_real_models_on_video():
                     break
     assert len(results) == 100
     assert any(r.detections for r in results)
-    if lanes is not None:
-        assert any(r.lane is not None for r in results)
     if signs is not None:
         assert any(r.signs is not None for r in results)
+    # Lanes are not asserted in live mode: YOLOP 640 on E-cores may not deliver a
+    # result within max_staleness_frames on a slow/throttled laptop (by design).
+
+
+@pytest.mark.models
+@pytest.mark.skipif(not VIDEO.exists(), reason="sample video missing")
+def test_real_models_replay_every_frame_complete():
+    cfg = PerceptionConfig(mode="replay")
+    objects, lanes, signs = load_models(cfg)
+    if objects is None:
+        pytest.skip("object model missing")
+    with PerceptionEngine(objects, lanes, signs, cfg) as eng, eng.open_video(VIDEO) as reader:
+        eng.pin_caller_to_foreground()
+        results = [eng.process(Frame(img, i / 30, i, "rp")) for i, img in zip(range(30), reader)]
+    assert len(results) == 30
+    if lanes is not None:
+        assert all(r.lane is not None for r in results)
+    if signs is not None:
+        assert all(r.signs is not None for r in results)

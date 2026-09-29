@@ -13,3 +13,4 @@ video/
 *.mkv
 .claude/settings.local.json
 *.jsonl
+data/

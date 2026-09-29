@@ -44,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-frames", type=int, default=0, help="0 = whole video")
     p.add_argument("--no-signs", action="store_true")
     p.add_argument("--no-lanes", action="store_true")
+    p.add_argument("--mode", choices=["replay", "live"], default="replay",
+                   help="replay: every frame complete (default); live: drop stale worker results")
     return p.parse_args()
 
 
@@ -57,7 +59,8 @@ def pct(values: list[float]) -> str:
 def main() -> int:
     args = parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    cfg = PerceptionConfig(enable_signs=not args.no_signs, enable_lanes=not args.no_lanes)
+    cfg = PerceptionConfig(enable_signs=not args.no_signs, enable_lanes=not args.no_lanes,
+                           mode=args.mode)
     objects, lanes, signs = load_models(cfg)
     engine = PerceptionEngine(objects, lanes, signs, cfg)
     engine.pin_caller_to_foreground()
@@ -137,8 +140,8 @@ def main() -> int:
     print(f"{'stage':10s} {'p50 ms':>7s}  {'p95 ms':>7s}   note")
     notes = {
         "objects": "sync, every frame",
-        "signs": f"worker, every {cfg.workers.sign_every_n} frames",
-        "lanes": f"worker, every {cfg.workers.lane_every_n} frames",
+        "signs": f"{'worker' if args.mode == 'live' else 'sync'}, every {cfg.workers.sign_every_n} frames",
+        "lanes": f"{'worker' if args.mode == 'live' else 'sync'}, every {cfg.workers.lane_every_n} frames",
         "loop": "read + process + draw",
     }
     for k in STAGES:

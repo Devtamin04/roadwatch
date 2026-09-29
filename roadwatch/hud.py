@@ -104,7 +104,12 @@ def draw_signs(frame: np.ndarray, signs) -> np.ndarray:
         x1, y1, x2, y2 = map(int, s.xyxy)
         color = SIGN_COLORS.get(s.group, (200, 200, 200))
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
-        label = f"{s.code}" + (f" {s.speed_value}km/h" if s.is_speed_limit else "")
+        if s.is_speed_limit:
+            value = f"{s.speed_value}km/h" if s.speed_value is not None else "?"
+            mark = {"digit_classifier": "*", "detector_class": ""}[s.source]
+            label = f"{s.code} {value}{mark}"
+        else:
+            label = s.code
         label += f" {s.det_conf:.2f}"
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
         y_text = y2 + th + 6 if y1 < th + 8 else y1 - 6

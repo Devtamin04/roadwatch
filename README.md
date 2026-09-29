@@ -22,12 +22,40 @@ python3 -m venv .venv-export
 
 ```bash
 ./run_gui.sh                       # GUI: open or drag-and-drop any video
-./run_gui.sh path/to/video.mp4     # start immediately
-.venv/bin/python scripts/demo_objects.py --source path/to/video.mp4 --show
+./run_gui.sh path/to/video.mp4     # start immediately (replay mode)
+./run_gui.sh --live path/to/video.mp4   # live mode: keep real-time pace
+.venv/bin/python scripts/demo_perception.py --source path/to/video.mp4 --show [--mode live]
 .venv/bin/python -m pytest -q
 ```
 
 Videos OpenCV cannot decode (e.g. AV1) are read through the system `ffmpeg` automatically.
+
+## Model stack
+
+| Task | Runtime artifact | Notes |
+|---|---|---|
+| Road users | `models/yolo11n_320.onnx` | person, bicycle, motorcycle, car, bus, truck |
+| Traffic signs | `models/vn_signs_416.onnx` | 58 VR-TSD classes, trained at 640, run at 416 |
+| Speed value | `models/speed_digits_64.onnx` | confirms the value on speed-limit signs; rejects non-speed signs ("other") |
+| Lanes + drivable area | `models/yolop-640-640-seg.onnx` | YOLOP 640 without its unused detection head; LDW locks when lane quality is low |
+
+`PerceptionConfig.mode = "replay"` (default) computes signs/lanes for every frame on
+schedule and never drops results; this is slow on a laptop CPU (~2–3 FPS with YOLOP 640).
+Use `--mode live` / `./run_gui.sh --live` for camera-like real-time behaviour.
+
+### Training the speed-value classifier (CPU is enough)
+
+1. Download VR-TSD from Roboflow (Download Dataset → YOLOv11 → zip) and unzip it, e.g.
+   to `~/Downloads/vr-tsd`.
+2. Build crops and train:
+
+```bash
+.venv/bin/python scripts/build_speed_digit_dataset.py --yolo-dataset ~/Downloads/vr-tsd \
+    --out data/speed_digits --synthetic 150
+.venv-export/bin/python scripts/train_speed_digits.py --data data/speed_digits
+```
+
+The model is picked up automatically when `models/speed_digits_64.onnx` exists.
 
 ## Performance notes
 

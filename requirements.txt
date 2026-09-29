@@ -10,5 +10,6 @@ onnx>=1.15  # deriving yolop-*-seg.onnx, model metadata, tests
 #   mkdir -p ~/intel && printf 0 > ~/intel/openvino_telemetry
 # openvino>=2024.4
 
-# Dev / test
+# Dev / test / dataset tools
 pytest>=7.4
+pyyaml>=6  # scripts/build_speed_digit_dataset.py reads YOLO data.yaml

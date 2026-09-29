@@ -642,6 +642,23 @@
         "foreground"
       ],
       "notes": "MIT license. Outputs det_out (ignored), drive_area_seg, lane_line_seg; input RGB/255 normalised with ImageNet mean/std, letterbox pad 114."
+    },
+    {
+      "name": "yolop-640-seg",
+      "file": "yolop-640-640-seg.onnx",
+      "sha256": "bb40141e436b2c8996babd08ff230354604e0caf5a426815a6dfab9831a952c3",
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "source": "derived from yolop-640-640.onnx (sha256 cd66a3e0087a...) with onnx.utils.extract_model, outputs drive_area_seg + lane_line_seg only",
+      "classes": [
+        "background",
+        "foreground"
+      ],
+      "notes": "MIT license. Outputs det_out (ignored), drive_area_seg, lane_line_seg; input RGB/255 normalised with ImageNet mean/std, letterbox pad 114."
     }
   ]
 }

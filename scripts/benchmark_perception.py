@@ -38,10 +38,10 @@ WARMUP = 20
 
 def preset(obj_model: str, lane_model: str | None = None, place: bool = True, nice: int = 10,
            obj_threads: int = 8, lane_threads: int = 4, sign_threads: int = 2,
-           backend: str = "onnxruntime", every=(3, 2)) -> dict:
+           backend: str = "onnxruntime", every=(3, 2), mode: str = "live") -> dict:
     return {"obj_model": obj_model, "lane_model": lane_model, "place": place, "nice": nice,
             "threads": (obj_threads, lane_threads, sign_threads), "backend": backend,
-            "every": every}
+            "every": every, "mode": mode}
 
 
 PRESETS = {
@@ -53,6 +53,15 @@ PRESETS = {
     "p8-n416": preset("yolo11n_416.onnx"),
     "p8-s320": preset("yolo11s_320.onnx"),
     "p8-s416": preset("yolo11s_416.onnx"),
+    # Reference stack: YOLO11n 320 + signs 416 + YOLOP 640 lanes.
+    "stack-lane640": preset("yolo11n_320.onnx", lane_model="yolop-640-640-seg.onnx"),
+    "stack-lane640-e3": preset("yolo11n_320.onnx", lane_model="yolop-640-640-seg.onnx",
+                               every=(3, 3)),
+    # Release stack as shipped: replay mode (every frame complete), YOLOP 640.
+    "release-replay": preset("yolo11n_320.onnx", lane_model="yolop-640-640-seg.onnx",
+                             mode="replay"),
+    "release-replay-lane320": preset("yolo11n_320.onnx", lane_model="yolop-320-320-seg.onnx",
+                                     mode="replay"),
     "p8-n320-l6": preset("yolo11n_320.onnx", lane_threads=6),
     "p8-n416-l6": preset("yolo11n_416.onnx", lane_threads=6),
     # Same with OpenVINO for all models (optional backend).
@@ -71,6 +80,7 @@ def build(p: dict) -> PerceptionConfig:
     cfg.workers.sign_every_n, cfg.workers.lane_every_n = p["every"]
     cfg.workers.worker_nice = p["nice"]
     cfg.workers.place_on_hybrid_cores = p["place"]
+    cfg.mode = p["mode"]
     return cfg
 
 
